@@ -1,0 +1,37 @@
+# WSL2 Configuration for GPU Deep Learning
+# Updated configuration for WSL 2.7.0+
+# After WSL2 upgrade, copy this to: C:\Users\paul\.wslconfig
+# Then run in PowerShell: wsl --shutdown
+
+[wsl2]
+# Memory allocation
+memory=32GB              # Allocate 32GB for WSL2 (leaves 32GB for Windows)
+swap=16GB                # Swap space for safety
+swapFile=C:\\Users\\paul\\AppData\\Local\\Temp\\wsl-swap.vhdx
+
+# Processor allocation
+processors=16            # Use 16 cores (leaves 8 for Windows)
+
+# Network
+localhostForwarding=true
+
+# GPU and memory settings
+nestedVirtualization=true
+guiApplications=true
+
+# NEW FEATURES (WSL 2.7.0+ only)
+autoMemoryReclaim=gradual  # Automatically reclaim memory gradually (better than pageReporting)
+sparseVhd=true             # Allow virtual disk to shrink when files are deleted
+
+# Performance optimizations
+vmIdleTimeout=60000      # Keep VM alive for 60 seconds after last use
+
+# IMPORTANT: After copying this file to Windows, restart WSL2:
+# Open PowerShell as Administrator and run: wsl --shutdown
+# Then reopen your WSL2 terminal
+
+# Configuration notes:
+# - autoMemoryReclaim=gradual: Reclaims unused memory back to Windows gradually
+#   Options: disabled, gradual, dropcache (gradual is recommended)
+# - sparseVhd=true: Virtual hard disk can shrink, saving Windows disk space
+#   This prevents the .vhdx file from growing indefinitely

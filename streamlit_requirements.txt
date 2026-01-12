@@ -1,0 +1,5 @@
+streamlit>=1.33
+soundfile>=0.12
+# Install the torch wheel that matches your CUDA/CPU target
+torch>=2.2
+sam_audio @ git+https://github.com/facebookresearch/sam-audio

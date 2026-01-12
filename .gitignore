@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Audio files
+*.wav
+*.mp3
+*.flac
+*.ogg
+audio_cache/
+audio_output/
+audio_work/
+audio_work_robust/
+
+# Logs
+*.log
+.sam_audio_logs/
+
+# Model files (too large for git)
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Config
+.sam_audio_config.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System
+.DS_Store
+Thumbs.db
+
+# Checkpoints
+.checkpoints/
+
+# Claude
+.claude/
+
+# Monitoring
+memory_monitor_*.log
