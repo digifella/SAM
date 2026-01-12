@@ -18,6 +18,7 @@ import argparse
 import gc
 import json
 import logging
+import readline  # Enable arrow keys and line editing in input()
 import subprocess
 import sys
 import tempfile
@@ -329,9 +330,21 @@ def save_config(config: Dict[str, Any]):
 
 
 def get_user_input(prompt: str, default: Any, input_type=str) -> Any:
-    """Get user input with default value."""
+    """Get user input with default value pre-filled for easy editing."""
     default_str = str(default)
-    user_input = input(f"{prompt} [{default_str}]: ").strip()
+
+    # Pre-fill the input with the default value for easy editing
+    def pre_fill_default():
+        readline.insert_text(default_str)
+        readline.redisplay()
+
+    readline.set_pre_input_hook(pre_fill_default)
+
+    try:
+        user_input = input(f"{prompt}: ").strip()
+    finally:
+        # Clear the hook after use
+        readline.set_pre_input_hook()
 
     if not user_input:
         return default
@@ -681,13 +694,13 @@ def process_audio_file(
 
             target_chunks = []
             residual_chunks = []
-            sample_rate = None  # Will be set from first chunk
+
+            # CRITICAL: Use model's OUTPUT sample rate, not input sample rate
+            output_sample_rate = int(processor.audio_sampling_rate)
+            logger.info(f"Model output sample rate: {output_sample_rate} Hz")
 
             # Stream chunks one at a time using generator
             for i, (start, end, chunk_data, sr) in enumerate(chunk_audio_generator(process_path, chunk_duration, overlap), 1):
-                # Capture sample rate from first chunk
-                if sample_rate is None:
-                    sample_rate = sr
 
                 print(f"  → Processing chunk {i}/{num_chunks} ({start:.1f}s - {end:.1f}s)...", end=" ")
                 logger.info(f"Processing chunk {i}/{num_chunks} ({start:.1f}s - {end:.1f}s)")
@@ -728,11 +741,15 @@ def process_audio_file(
             logger.info(f"Merging {num_chunks} chunks...")
             log_memory_stats(logger, "Before merging", device)
 
-            target_audio = merge_chunks(target_chunks, overlap, sample_rate)
+            # Use model output sample rate for merging
+            target_audio = merge_chunks(target_chunks, overlap, output_sample_rate)
             log_memory_stats(logger, "After merging targets", device)
 
-            residual_audio = merge_chunks(residual_chunks, overlap, sample_rate)
+            residual_audio = merge_chunks(residual_chunks, overlap, output_sample_rate)
             log_memory_stats(logger, "After merging residuals", device)
+
+            # Set sample_rate for saving
+            sample_rate = output_sample_rate
 
             # CRITICAL: Delete chunk lists immediately after merging
             del target_chunks, residual_chunks
