@@ -583,7 +583,7 @@ def merge_chunks(chunks: list, overlap: float, sample_rate: int) -> np.ndarray:
 
     overlap_samples = int(overlap * sample_rate)
 
-    # Calculate total length
+    # Calculate total length (with buffer for rounding errors)
     total_samples = sum(len(c) for c in chunks) - (len(chunks) - 1) * overlap_samples
     merged = np.zeros(total_samples, dtype=chunks[0].dtype)
 
@@ -594,23 +594,40 @@ def merge_chunks(chunks: list, overlap: float, sample_rate: int) -> np.ndarray:
             merged[:len(chunk)] = chunk
             pos = len(chunk) - overlap_samples
         else:
+            # Calculate actual overlap for this chunk (may be less than expected for short chunks)
+            actual_overlap = min(overlap_samples, len(chunk))
+
             # Crossfade with previous chunk
-            if overlap_samples > 0:
-                fade_out = np.linspace(1, 0, overlap_samples)
-                fade_in = np.linspace(0, 1, overlap_samples)
+            if actual_overlap > 0:
+                fade_out = np.linspace(1, 0, actual_overlap)
+                fade_in = np.linspace(0, 1, actual_overlap)
 
                 # Apply crossfade
-                merged[pos:pos + overlap_samples] = (
-                    merged[pos:pos + overlap_samples] * fade_out +
-                    chunk[:overlap_samples] * fade_in
+                merged[pos:pos + actual_overlap] = (
+                    merged[pos:pos + actual_overlap] * fade_out +
+                    chunk[:actual_overlap] * fade_in
                 )
 
-                # Add rest of chunk
-                merged[pos + overlap_samples:pos + len(chunk)] = chunk[overlap_samples:]
-            else:
-                merged[pos:pos + len(chunk)] = chunk
+                # Add rest of chunk - handle size mismatches due to rounding
+                chunk_remainder = chunk[actual_overlap:]
+                end_pos = pos + len(chunk)
 
-            pos += len(chunk) - overlap_samples
+                # If chunk extends beyond merged array (due to rounding), expand merged
+                if end_pos > len(merged):
+                    extra_samples = end_pos - len(merged)
+                    merged = np.concatenate([merged, np.zeros(extra_samples, dtype=merged.dtype)])
+
+                merged[pos + actual_overlap:end_pos] = chunk_remainder
+            else:
+                # Handle no-overlap case with same safety check
+                end_pos = pos + len(chunk)
+                if end_pos > len(merged):
+                    extra_samples = end_pos - len(merged)
+                    merged = np.concatenate([merged, np.zeros(extra_samples, dtype=merged.dtype)])
+                merged[pos:end_pos] = chunk
+
+            # Advance position by the actual overlap used
+            pos += len(chunk) - actual_overlap
 
     return merged
 
