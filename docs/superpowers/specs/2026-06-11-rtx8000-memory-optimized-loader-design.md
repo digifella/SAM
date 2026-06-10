@@ -28,7 +28,9 @@ parameters, forcing all processing onto Colab. Two compounding causes:
 ## Goals
 
 - Run SAM-Audio large end-to-end on the RTX 8000 locally with comfortable
-  VRAM headroom (~7–8 GB resident weights, ~40 GB free for activations).
+  VRAM headroom (~13 GB resident weights, ~33 GB free for activations —
+  measured 12.84 GB; the pe-a-frame-large span predictor turned out to be
+  1.53B params / 6.1 GB fp32, far above the original ~1–2 GB estimate).
 - Keep: text-prompted extract/remove, span prediction
   (`predict_spans: true`), existing chunking/merge logic, interactive
   script, Streamlit harness, queue worker.
@@ -76,8 +78,8 @@ A single entry point, e.g. `load_sam_audio_optimized(model_dir, device)`:
    boundaries (fp16 into codec/DiT, fp32 into T5) and returns fp32
    audio. No global autocast.
 
-Expected resident VRAM: DiT 5.9 GB + codec 0.2 GB + T5 0.5 GB + span
-predictor ~1 GB ≈ **7–8 GB** (vs 30.8 GB today).
+Measured resident VRAM: DiT 5.9 GB + span predictor 6.1 GB (fp32) + T5
+0.4 GB + codec 0.2 GB ≈ **12.8 GB** (vs 30.8 GB today).
 
 ### Call-site changes
 
@@ -101,7 +103,7 @@ predictor ~1 GB ≈ **7–8 GB** (vs 30.8 GB today).
 
 1. **Unit-level:** loader smoke test asserting (a) no `vision_encoder`
    parameters on the model, (b) rankers are `None`, (c) DiT dtype is
-   fp16, (d) resident VRAM after load < 10 GB.
+   fp16, (d) resident VRAM after load < 14 GB.
 2. **End-to-end:** process one real input file from
    `/mnt/f/hf-home/audio_input` with saved settings (30 s chunks, 2 s
    overlap, "men's voices", spans on) while logging `nvidia-smi` and

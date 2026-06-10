@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Load SAM-Audio large in ~7–8GB VRAM (fp16, vision encoder + rankers stripped, mmap checkpoint load) so the full pipeline runs locally on the Quadro RTX 8000 without OOM.
+**Goal:** Load SAM-Audio large in ~13GB resident VRAM (measured 12.84GB) (fp16, vision encoder + rankers stripped, mmap checkpoint load) so the full pipeline runs locally on the Quadro RTX 8000 without OOM.
 
 **Architecture:** A new repo-local package `sam_audio_local/` provides `load_sam_audio_optimized()`. It strips rankers via config (upstream `SAMAudioConfig` accepts `visual_ranker=None, text_ranker=None` natively), swaps the vision encoder for a zero-parameter stub via a context-managed monkeypatch, mmap-loads the checkpoint, and casts checkpoint-backed modules to fp16. The two existing load sites (`run_sam_interactive.py:1163`, `worker/handlers/sam_audio_cleanup.py:64`) switch to it. dtype casts at module boundaries go into the existing `memory_safe_separate()` in `run_sam_interactive.py`, which the worker and Streamlit app already reuse.
 
@@ -151,7 +151,7 @@ Create `sam_audio_local/loader.py`:
 Strips the vision encoder (PE-Core-L14, 2.7GB) and all rankers
 (ImageBind/CLAP/Judge), mmap-loads the checkpoint to stay under the WSL2
 RAM ceiling, and casts checkpoint-backed modules to fp16 (native on
-Turing). Resident VRAM drops from ~31GB to ~7-8GB.
+Turing). Resident VRAM drops from ~31GB to ~13GB.
 
 Design: docs/superpowers/specs/2026-06-11-rtx8000-memory-optimized-loader-design.md
 """
@@ -222,7 +222,7 @@ def stubbed_vision_encoder():
 
 
 def load_sam_audio_optimized(model_dir, device: str = "cuda") -> SAMAudio:
-    """Load SAM-Audio for text-prompted separation in ~7-8GB VRAM.
+    """Load SAM-Audio for text-prompted separation in ~13GB VRAM.
 
     fp16 on CUDA; full fp32 on CPU fallback (fp16 CPU inference is
     unsupported for many ops).
@@ -677,7 +677,7 @@ Fallback knob, in order: remove `"audio_codec"` from `FP16_MODULES` in `sam_audi
 ```markdown
 ## Memory-Optimized Local Loading (RTX 8000 / 48GB)
 
-`sam_audio_local/loader.py` loads SAM-Audio large in ~7-8GB resident VRAM
+`sam_audio_local/loader.py` loads SAM-Audio large in ~13GB resident VRAM
 (vs ~31GB stock) by:
 
 - stripping the vision encoder and ImageBind/CLAP/Judge rerankers
