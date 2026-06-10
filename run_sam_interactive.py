@@ -26,7 +26,7 @@ import time
 import types
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 
 import numpy as np
 import soundfile as sf
@@ -48,6 +48,10 @@ AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'}
 
 # Safety limits
 MAX_FILES_PER_SESSION = 100  # Prevent runaway processing
+MIN_MEM_AVAILABLE_GB = float(os.environ.get("SAM_MIN_MEM_AVAILABLE_GB", "2.0"))
+MIN_SWAP_FREE_GB = float(os.environ.get("SAM_MIN_SWAP_FREE_GB", "1.0"))
+MEMORY_PREFLIGHT_RETRIES = max(1, int(os.environ.get("SAM_MEMORY_PREFLIGHT_RETRIES", "3")))
+MEMORY_PREFLIGHT_WAIT_SECONDS = max(1, int(os.environ.get("SAM_MEMORY_PREFLIGHT_WAIT_SECONDS", "5")))
 
 # Default values
 DEFAULT_CONFIG = {
@@ -135,6 +139,145 @@ def log_memory_stats(logger: logging.Logger, stage: str, device: str = "cuda"):
     # Force flush to ensure log is written even if we crash
     for handler in logger.handlers:
         handler.flush()
+
+
+def _read_memory_snapshot_gb() -> Dict[str, float]:
+    """Return key RAM/swap values from /proc/meminfo in GB."""
+    meminfo: Dict[str, int] = {}
+    with open('/proc/meminfo', 'r') as f:
+        for line in f:
+            parts = line.split(':')
+            if len(parts) != 2:
+                continue
+            key = parts[0].strip()
+            value_raw = parts[1].strip().split()[0]
+            try:
+                meminfo[key] = int(value_raw)
+            except ValueError:
+                continue
+
+    def _kb_to_gb(key: str) -> float:
+        return meminfo.get(key, 0) / (1024 ** 2)
+
+    mem_total_gb = _kb_to_gb("MemTotal")
+    mem_available_gb = _kb_to_gb("MemAvailable")
+    swap_total_gb = _kb_to_gb("SwapTotal")
+    swap_free_gb = _kb_to_gb("SwapFree")
+    swap_used_gb = max(0.0, swap_total_gb - swap_free_gb)
+    mem_used_gb = max(0.0, mem_total_gb - mem_available_gb)
+    mem_percent = (mem_used_gb / mem_total_gb * 100.0) if mem_total_gb > 0 else 0.0
+
+    return {
+        "mem_total_gb": mem_total_gb,
+        "mem_available_gb": mem_available_gb,
+        "mem_used_gb": mem_used_gb,
+        "mem_percent": mem_percent,
+        "swap_total_gb": swap_total_gb,
+        "swap_free_gb": swap_free_gb,
+        "swap_used_gb": swap_used_gb,
+    }
+
+
+def ensure_memory_headroom(
+    logger: logging.Logger,
+    stage: str,
+    min_mem_available_gb: float = MIN_MEM_AVAILABLE_GB,
+    min_swap_free_gb: float = MIN_SWAP_FREE_GB,
+    retries: int = MEMORY_PREFLIGHT_RETRIES,
+    wait_seconds: int = MEMORY_PREFLIGHT_WAIT_SECONDS,
+) -> None:
+    """
+    Guardrail before inference to avoid WSL-wide OOM cascades.
+
+    Raises RuntimeError if system memory/swap headroom remains too low.
+    """
+    last_snapshot: Dict[str, float] = {}
+    for attempt in range(1, retries + 1):
+        snapshot = _read_memory_snapshot_gb()
+        last_snapshot = snapshot
+
+        mem_ok = snapshot["mem_available_gb"] >= min_mem_available_gb
+        swap_total = snapshot["swap_total_gb"]
+        swap_ok = (swap_total <= 0.0) or (snapshot["swap_free_gb"] >= min_swap_free_gb)
+        if mem_ok and swap_ok:
+            logger.info(
+                "Preflight memory check passed (%s): avail=%.2fGB swap_free=%.2fGB swap_total=%.2fGB",
+                stage,
+                snapshot["mem_available_gb"],
+                snapshot["swap_free_gb"],
+                snapshot["swap_total_gb"],
+            )
+            return
+
+        logger.warning(
+            "Preflight memory check low headroom (%s) attempt %d/%d: avail=%.2fGB (min %.2f), "
+            "swap_free=%.2fGB (min %.2f), mem_used=%.2fGB (%.1f%%), swap_used=%.2fGB/%.2fGB",
+            stage,
+            attempt,
+            retries,
+            snapshot["mem_available_gb"],
+            min_mem_available_gb,
+            snapshot["swap_free_gb"],
+            min_swap_free_gb,
+            snapshot["mem_used_gb"],
+            snapshot["mem_percent"],
+            snapshot["swap_used_gb"],
+            snapshot["swap_total_gb"],
+        )
+        aggressive_cleanup()
+        if attempt < retries:
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(
+        f"Insufficient memory headroom before {stage}: "
+        f"MemAvailable={last_snapshot.get('mem_available_gb', 0.0):.2f}GB "
+        f"(min {min_mem_available_gb:.2f}GB), "
+        f"SwapFree={last_snapshot.get('swap_free_gb', 0.0):.2f}GB "
+        f"(min {min_swap_free_gb:.2f}GB, SwapTotal={last_snapshot.get('swap_total_gb', 0.0):.2f}GB). "
+        "Aborting early to avoid WSL instability."
+    )
+
+
+def apply_cuda_memory_fraction_safely(
+    memory_fraction: float,
+    logger: Optional[logging.Logger] = None,
+    context: str = "",
+) -> float:
+    """
+    Apply per-process CUDA cap without starving already-allocated model memory.
+    Returns the effective fraction that was applied (or requested if not CUDA).
+    """
+    requested = max(0.10, min(0.98, float(memory_fraction)))
+    if not torch.cuda.is_available():
+        return requested
+
+    try:
+        total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        allocated_gb = torch.cuda.memory_allocated() / (1024 ** 3)
+        # Keep at least 1GB above currently allocated tensors to allow transient ops.
+        min_fraction_for_alloc = ((allocated_gb + 1.0) / total_gb) if total_gb > 0 else requested
+        effective = max(requested, min(0.98, min_fraction_for_alloc))
+
+        if logger and effective > requested:
+            logger.warning(
+                "Adjusted CUDA memory fraction from %.3f to %.3f (%s) because %.2fGB is already allocated",
+                requested,
+                effective,
+                context or "runtime",
+                allocated_gb,
+            )
+
+        torch.cuda.set_per_process_memory_fraction(effective, device=0)
+        return effective
+    except Exception as e:
+        if logger:
+            logger.warning(
+                "Could not set CUDA memory fraction=%.3f (%s): %s",
+                requested,
+                context or "runtime",
+                e,
+            )
+        return requested
 
 
 # ============================================================================
@@ -454,6 +597,13 @@ def chunk_audio_generator(audio_path: Path, chunk_duration: float, overlap: floa
     total_duration = info.duration
     sample_rate = info.samplerate
 
+    if chunk_duration <= 0:
+        raise ValueError("chunk_duration must be > 0 for chunked processing")
+    if overlap < 0:
+        raise ValueError("overlap must be >= 0")
+    if overlap >= chunk_duration:
+        raise ValueError("overlap must be less than chunk_duration")
+
     start = 0.0
     step = chunk_duration - overlap  # Non-overlapping portion
 
@@ -481,6 +631,13 @@ def count_chunks(audio_path: Path, chunk_duration: float, overlap: float) -> int
     """
     Calculate the number of chunks without loading audio into memory.
     """
+    if chunk_duration <= 0:
+        return 1
+    if overlap < 0:
+        raise ValueError("overlap must be >= 0")
+    if overlap >= chunk_duration:
+        raise ValueError("overlap must be less than chunk_duration")
+
     info = sf.info(audio_path)
     total_duration = info.duration
 
@@ -645,6 +802,9 @@ def process_audio_file(
     chunk_duration: float,
     overlap: float,
     convert_to_mono: bool,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
+    is_cancelled_cb: Optional[Callable[[], bool]] = None,
+    raise_on_error: bool = False,
 ) -> bool:
     """Process a single audio file with chunking support."""
 
@@ -674,6 +834,23 @@ def process_audio_file(
     log_memory_stats(logger, "Initial state", device)
 
     try:
+        # Enforce per-process CUDA allocator cap for this run profile.
+        # This makes OOM retry profiles materially different under worker mode.
+        if device == "cuda":
+            effective_fraction = apply_cuda_memory_fraction_safely(
+                float(memory_fraction),
+                logger=logger,
+                context=f"process_audio_file:{audio_path.name}",
+            )
+            logger.info(
+                "CUDA memory fraction requested=%.3f effective=%.3f",
+                float(memory_fraction),
+                float(effective_fraction),
+            )
+
+        if is_cancelled_cb and is_cancelled_cb():
+            raise RuntimeError("Cancelled before preprocessing")
+
         # Convert to mono 16k if requested
         process_path = audio_path
         if convert_to_mono:
@@ -708,6 +885,7 @@ def process_audio_file(
             print(f"✓ Will process {num_chunks} chunks (streaming mode - low memory)")
             logger.info(f"Will process {num_chunks} chunks (streaming mode)")
             log_memory_stats(logger, "Before chunk processing", device)
+            ensure_memory_headroom(logger, "chunked inference start")
 
             target_chunks = []
             residual_chunks = []
@@ -718,9 +896,15 @@ def process_audio_file(
 
             # Stream chunks one at a time using generator
             for i, (start, end, chunk_data, sr) in enumerate(chunk_audio_generator(process_path, chunk_duration, overlap), 1):
+                if is_cancelled_cb and is_cancelled_cb():
+                    raise RuntimeError("Cancelled during chunk processing")
+                ensure_memory_headroom(logger, f"chunk {i} inference", retries=1, wait_seconds=1)
 
                 print(f"  → Processing chunk {i}/{num_chunks} ({start:.1f}s - {end:.1f}s)...", end=" ")
                 logger.info(f"Processing chunk {i}/{num_chunks} ({start:.1f}s - {end:.1f}s)")
+                if progress_cb:
+                    p = 35 + int((i - 1) / max(1, num_chunks) * 45)
+                    progress_cb(p, f"Processing chunk {i}/{num_chunks} ({start:.1f}s-{end:.1f}s)")
 
                 try:
                     target, residual = process_chunk(
@@ -747,6 +931,9 @@ def process_audio_file(
                     gc.collect()
 
                 log_memory_stats(logger, f"After chunk {i} cleanup", device)
+                if progress_cb:
+                    p = 35 + int(i / max(1, num_chunks) * 45)
+                    progress_cb(p, f"Chunk {i}/{num_chunks} complete")
 
                 # Show memory status
                 if device == "cuda":
@@ -775,9 +962,14 @@ def process_audio_file(
 
             print("✓ Chunks merged")
             logger.info("Chunks merged successfully")
+            if progress_cb:
+                progress_cb(85, "Chunks merged")
 
         else:
             # Process entire file
+            if is_cancelled_cb and is_cancelled_cb():
+                raise RuntimeError("Cancelled before inference")
+            ensure_memory_headroom(logger, "full-file inference")
             print("[Step 4] Running inference...")
             logger.info("Running inference on entire file...")
             log_memory_stats(logger, "Before batch load", device)
@@ -809,6 +1001,8 @@ def process_audio_file(
 
             print("✓ Inference complete")
             logger.info("Inference complete")
+            if progress_cb:
+                progress_cb(80, "Inference complete")
 
         # Save outputs with unique names
         print("[Step 5] Saving results...")
@@ -823,6 +1017,8 @@ def process_audio_file(
 
         sf.write(target_path, target_audio, sample_rate, subtype='PCM_16')
         sf.write(residual_path, residual_audio, sample_rate, subtype='PCM_16')
+        if progress_cb:
+            progress_cb(92, "Audio files written")
 
         print(f"✓ Target:   {target_path.name}")
         print(f"✓ Residual: {residual_path.name}")
@@ -838,6 +1034,8 @@ def process_audio_file(
 
         logger.info("Processing completed successfully")
         logger.info("="*80)
+        if progress_cb:
+            progress_cb(96, "File processing complete")
 
         return True
 
@@ -847,6 +1045,8 @@ def process_audio_file(
         log_memory_stats(logger, "At error", device)
         import traceback
         traceback.print_exc()
+        if raise_on_error:
+            raise RuntimeError(f"{e} (log: {log_file})") from e
         return False
 
     finally:
@@ -871,6 +1071,15 @@ def batch_process(
     convert_to_mono: bool,
 ):
     """Process all audio files in input directory."""
+
+    if chunk_duration <= 0:
+        print("Info: chunk_duration <= 0, chunking disabled (full-file mode).")
+    elif overlap < 0:
+        raise ValueError("overlap must be >= 0")
+    elif overlap >= chunk_duration:
+        raise ValueError(
+            f"Invalid chunk settings: overlap ({overlap}) must be less than chunk_duration ({chunk_duration})"
+        )
 
     # CRITICAL FIX: Prevent directory collision that causes infinite loops
     input_resolved = input_dir.resolve()
@@ -941,7 +1150,7 @@ def batch_process(
     # Setup device
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cuda":
-        torch.cuda.set_per_process_memory_fraction(memory_fraction, device=0)
+        apply_cuda_memory_fraction_safely(memory_fraction, context="batch_process")
 
     print(f"\nDevice: {device}")
     print(f"Memory fraction: {memory_fraction}")
@@ -1096,6 +1305,20 @@ def interactive_mode():
         str
     )
     predict_spans = predict_spans_input.lower() in ('y', 'yes')
+
+    # Normalize potentially dangerous chunk settings before save/run
+    if chunk_duration <= 0:
+        overlap = 0.0
+    elif overlap < 0:
+        print("Warning: overlap cannot be negative. Using 0.0.")
+        overlap = 0.0
+    elif overlap >= chunk_duration:
+        suggested = max(0.0, round(chunk_duration * 0.2, 3))
+        print(
+            f"Warning: overlap ({overlap}) must be < chunk_duration ({chunk_duration}). "
+            f"Using safer overlap={suggested}."
+        )
+        overlap = suggested
 
     # Save preferences
     config["input_dir"] = input_dir

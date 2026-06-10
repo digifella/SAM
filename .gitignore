@@ -31,6 +31,8 @@ audio_work_robust/
 
 # Config
 .sam_audio_config.json
+worker/config.env
+worker/tmp/
 
 # IDE
 .vscode/

@@ -1,4 +1,8 @@
-streamlit>=1.33
+# Keep Streamlit on a protobuf<3.20-compatible release because
+# sam_audio -> descript-audiotools==0.7.2 requires protobuf<3.20.
+streamlit==1.19.0
+altair<5
+protobuf<3.20
 soundfile>=0.12
 # Install the torch wheel that matches your CUDA/CPU target
 torch>=2.2

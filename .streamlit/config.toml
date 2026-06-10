@@ -1,0 +1,6 @@
+[server]
+# Prevent Streamlit from crawling torch internals and spamming warnings.
+fileWatcherType = "none"
+
+[logger]
+level = "warning"

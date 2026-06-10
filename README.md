@@ -18,6 +18,36 @@ Memory-optimized interactive batch processor for SAM-Audio with chunking support
 python run_sam_interactive.py
 ```
 
+## Queue Worker (Website Integration)
+
+This repo now includes a queue worker compatible with your website queue API (`/admin/queue_worker_api.php`), matching the same pattern used in `cortex_suite`.
+
+```bash
+cp worker/config.env.example worker/config.env
+python worker/worker.py
+```
+
+Details and supported queue parameters are documented in `worker/README.md`.
+
+## Local Streamlit Harness
+
+Use the local GUI to test the same processing path as queue jobs (`sam_audio_cleanup` handler):
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The app lets you upload one file, tune key options (trial seconds, normalize %, sample rate/channels, chunking, rerank), run local processing, preview `target.wav` and `residual.wav`, and download the ZIP output.
+
+## Colab Smoke Test (No Streamlit)
+
+To test the same processing pipeline on Google Colab (single file, conservative memory settings), use:
+
+- Notebook: `colab/SAM_Audio_Colab_Smoke_Test.ipynb`
+- CLI entrypoint: `colab_smoke_test.py`
+
+The notebook installs dependencies, uploads one audio file, downloads model weights, runs `sam_audio_cleanup`, and downloads the result ZIP.
+
 The script will prompt you for:
 - Input directory containing audio files
 - Text description of audio to extract
