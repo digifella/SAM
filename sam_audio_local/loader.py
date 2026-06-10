@@ -3,7 +3,7 @@
 Strips the vision encoder (PE-Core-L14, 2.7GB) and all rankers
 (ImageBind/CLAP/Judge), mmap-loads the checkpoint to stay under the WSL2
 RAM ceiling, and casts checkpoint-backed modules to fp16 (native on
-Turing). Resident VRAM drops from ~31GB to ~7-8GB.
+Turing). Resident VRAM drops from ~31GB to ~13GB.
 
 Design: docs/superpowers/specs/2026-06-11-rtx8000-memory-optimized-loader-design.md
 """
@@ -20,8 +20,8 @@ from sam_audio import SAMAudio
 from sam_audio.model import model as _sam_model_module
 
 # Checkpoint-backed modules cast to fp16. text_encoder (T5, fp16-fragile)
-# and span_predictor (HF-loaded, ~1-2GB) stay fp32; dtype boundaries are
-# handled in memory_safe_separate (run_sam_interactive.py).
+# and span_predictor (HF-loaded, 1.53B params / 6.1GB fp32) stay fp32;
+# dtype boundaries are handled in memory_safe_separate (run_sam_interactive.py).
 FP16_MODULES = (
     "audio_codec",
     "transformer",
@@ -74,7 +74,7 @@ def stubbed_vision_encoder():
 
 
 def load_sam_audio_optimized(model_dir, device: str = "cuda") -> SAMAudio:
-    """Load SAM-Audio for text-prompted separation in ~7-8GB VRAM.
+    """Load SAM-Audio for text-prompted separation in ~13GB VRAM.
 
     fp16 on CUDA; full fp32 on CPU fallback (fp16 CPU inference is
     unsupported for many ops).
