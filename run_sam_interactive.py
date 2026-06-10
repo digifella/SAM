@@ -312,15 +312,33 @@ def memory_safe_separate(
     It also moves tensors to CPU before reranking to prevent GPU OOM.
     """
 
+    if (
+        reranking_candidates > 1
+        and self.visual_ranker is None
+        and self.text_ranker is None
+    ):
+        print(
+            "Note: reranking unavailable (rankers stripped in memory-optimized "
+            "build); using 1 candidate"
+        )
+        reranking_candidates = 1
+
+    # fp16 boundary: optimized loader keeps codec/DiT in fp16, T5/spans in fp32
+    model_dtype = next(self.audio_codec.parameters()).dtype
+    if batch.audios.dtype != model_dtype:
+        batch.audios = batch.audios.to(model_dtype)
+
     # Stage 1: Encode audio and prepare forward args
     forward_args = self._get_forward_args(batch, candidates=reranking_candidates)
+    if forward_args["text_features"].dtype != model_dtype:
+        forward_args["text_features"] = forward_args["text_features"].to(model_dtype)
 
     if predict_spans and hasattr(self, "span_predictor") and batch.anchors is None:
         batch = self.predict_spans(
             batch=batch,
             audio_features=self._unrepeat_from_reranking(
                 forward_args["audio_features"], reranking_candidates
-            ),
+            ).float(),
             audio_pad_mask=self._unrepeat_from_reranking(
                 forward_args["audio_pad_mask"], reranking_candidates
             ),
@@ -337,7 +355,7 @@ def memory_safe_separate(
     def vector_field(t, noisy_audio):
         res = self.forward(
             noisy_audio=noisy_audio,
-            time=t.expand(noisy_audio.size(0)),
+            time=t.to(noisy_audio.dtype).expand(noisy_audio.size(0)),
             **forward_args,
         )
         return res
@@ -349,7 +367,7 @@ def memory_safe_separate(
         **ode_opt,
     )
 
-    generated_features = states[-1].transpose(1, 2)
+    generated_features = states[-1].transpose(1, 2).to(model_dtype)
 
     # CRITICAL: Synchronize before cleanup to ensure ODE operations are complete
     if torch.cuda.is_available():
@@ -421,9 +439,9 @@ def memory_safe_separate(
 
     # Stage 6: Select best candidates and return
     result = SeparationResult(
-        target=[wav[idx] for wav, idx in zip(target_wavs, idxs, strict=False)],
+        target=[wav[idx].float() for wav, idx in zip(target_wavs, idxs, strict=False)],
         residual=[
-            wavs[idx] for wavs, idx in zip(residual_wavs, idxs, strict=False)
+            wavs[idx].float() for wavs, idx in zip(residual_wavs, idxs, strict=False)
         ],
         noise=None,  # Already deleted to save memory
     )
