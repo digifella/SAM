@@ -19,6 +19,7 @@ import gc
 import json
 import logging
 import readline  # Enable arrow keys and line editing in input()
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,6 +47,9 @@ LOG_DIR.mkdir(exist_ok=True)
 
 # Supported audio formats
 AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'}
+
+# Video containers accepted as input; audio is extracted with ffmpeg first
+VIDEO_EXTENSIONS = {'.mp4', '.mkv'}
 
 # Safety limits
 MAX_FILES_PER_SESSION = 100  # Prevent runaway processing
@@ -532,7 +536,7 @@ def get_user_input(prompt: str, default: Any, input_type=str) -> Any:
 def find_audio_files(input_dir: Path) -> List[Path]:
     """Find all audio files in input directory, excluding SAM-Audio output files."""
     audio_files = []
-    for ext in AUDIO_EXTENSIONS:
+    for ext in AUDIO_EXTENSIONS | VIDEO_EXTENSIONS:
         audio_files.extend(input_dir.glob(f'*{ext}'))
 
     # CRITICAL FIX: Exclude files that are outputs from THIS script
@@ -548,6 +552,29 @@ def find_audio_files(input_dir: Path) -> List[Path]:
         filtered_files.append(f)
 
     return sorted(filtered_files)
+
+
+def extract_audio_to_wav(path: Path, ffmpeg_bin: str = "ffmpeg", out_dir: Optional[Path] = None) -> Path:
+    """Extract the default audio track of a video container to <stem>.wav.
+
+    The wav keeps the source stem so downstream output naming is unchanged.
+    When out_dir is None a fresh temp dir is created; the caller owns cleanup
+    of the returned file's parent in that case.
+    """
+    if out_dir is None:
+        out_dir = Path(tempfile.mkdtemp(prefix="sam_video_audio_"))
+    out = out_dir / f"{path.stem}.wav"
+    cmd = [
+        ffmpeg_bin, "-y", "-i", str(path),
+        "-vn", "-acodec", "pcm_s16le", "-ar", "48000", "-ac", "2",
+        str(out),
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0 or not out.exists():
+        raise RuntimeError(
+            f"ffmpeg audio extraction failed for {path.name}: {proc.stderr[-500:]}"
+        )
+    return out
 
 
 def get_unique_output_path(output_dir: Path, stem: str, suffix: str = '.wav') -> Path:
@@ -1142,7 +1169,7 @@ def batch_process(
 
     if not audio_files:
         print(f"\nNo audio files found in {input_dir}")
-        print(f"Supported formats: {', '.join(AUDIO_EXTENSIONS)}")
+        print(f"Supported formats: {', '.join(sorted(AUDIO_EXTENSIONS | VIDEO_EXTENSIONS))}")
         return
 
     # CRITICAL FIX: Enforce maximum file limit to prevent runaway processing
@@ -1200,8 +1227,14 @@ def batch_process(
                 continue
 
             processed_files.add(file_id)
+            process_path = audio_file
+            extracted_dir = None
+            if audio_file.suffix.lower() in VIDEO_EXTENSIONS:
+                print(f"  Extracting audio track from {audio_file.name} ...")
+                process_path = extract_audio_to_wav(audio_file)
+                extracted_dir = process_path.parent
             success = process_audio_file(
-                audio_file,
+                process_path,
                 description,
                 output_dir,
                 model,
@@ -1214,6 +1247,9 @@ def batch_process(
                 overlap,
                 convert_to_mono,
             )
+
+            if extracted_dir is not None:
+                shutil.rmtree(extracted_dir, ignore_errors=True)
 
             if success:
                 success_count += 1

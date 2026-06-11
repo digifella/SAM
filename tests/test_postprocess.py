@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,6 +73,72 @@ class LoudnormRoundTripTests(unittest.TestCase):
             self.assertLessEqual(float(measured["input_tp"]), -2.9)
             info = sf.info(str(path))
             self.assertEqual(info.samplerate, sr)
+
+
+def _make_test_mp4(path: Path) -> None:
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+        "-f", "lavfi", "-i", "color=c=black:s=64x64:d=2",
+        "-shortest", "-c:v", "libx264", "-c:a", "aac",
+        str(path),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not on PATH")
+class ExtractAudioTests(unittest.TestCase):
+    def test_mp4_extraction(self):
+        from run_sam_interactive import extract_audio_to_wav
+
+        with tempfile.TemporaryDirectory() as td:
+            mp4 = Path(td) / "clip.mp4"
+            _make_test_mp4(mp4)
+            wav = extract_audio_to_wav(mp4, out_dir=Path(td))
+            self.assertEqual(wav.name, "clip.wav")
+            info = sf.info(str(wav))
+            self.assertEqual(info.samplerate, 48000)
+            self.assertEqual(info.channels, 2)
+            self.assertAlmostEqual(info.duration, 2.0, delta=0.2)
+
+    def test_mkv_extraction(self):
+        from run_sam_interactive import extract_audio_to_wav
+
+        with tempfile.TemporaryDirectory() as td:
+            mp4 = Path(td) / "clip.mp4"
+            _make_test_mp4(mp4)
+            mkv = Path(td) / "clip.mkv"
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(mp4), "-c", "copy", str(mkv)],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            wav = extract_audio_to_wav(mkv, out_dir=Path(td))
+            self.assertEqual(wav.name, "clip.wav")
+            self.assertAlmostEqual(sf.info(str(wav)).duration, 2.0, delta=0.2)
+
+    def test_no_audio_stream_raises(self):
+        from run_sam_interactive import extract_audio_to_wav
+
+        with tempfile.TemporaryDirectory() as td:
+            silent = Path(td) / "noaudio.mp4"
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
+                 "-c:v", "libx264", str(silent)],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            with self.assertRaises(RuntimeError):
+                extract_audio_to_wav(silent, out_dir=Path(td))
+
+
+class VideoExtensionRoutingTests(unittest.TestCase):
+    def test_find_audio_files_includes_video(self):
+        from run_sam_interactive import find_audio_files
+
+        with tempfile.TemporaryDirectory() as td:
+            for name in ("a.wav", "b.mp4", "c.mkv", "d.txt", "e_target.wav"):
+                (Path(td) / name).touch()
+            found = {p.name for p in find_audio_files(Path(td))}
+            self.assertEqual(found, {"a.wav", "b.mp4", "c.mkv"})
 
 
 if __name__ == "__main__":
