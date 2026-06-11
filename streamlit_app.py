@@ -206,7 +206,7 @@ def main() -> None:
 
     uploaded = st.file_uploader(
         "Upload audio or video file",
-        type=["wav", "mp3", "flac", "ogg", "m4a", "aac", "mp4", "mkv"],
+        type=["wav", "mp3", "flac", "ogg", "m4a", "aac", "mp4", "mkv", "mov"],
         accept_multiple_files=False,
     )
 

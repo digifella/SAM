@@ -10,7 +10,7 @@ Memory-optimized interactive batch processor for SAM-Audio with chunking support
 - **WSL2 optimized** - Aggressive memory cleanup prevents crashes on WSL2 systems
 - **Progress tracking** - Real-time progress updates and detailed logging
 - **GPU accelerated** - CUDA support with configurable memory limits
-- **Video input** - MP4/MKV accepted everywhere; audio is extracted with ffmpeg before processing
+- **Video input** - MP4/MKV/MOV accepted everywhere; audio is extracted with ffmpeg before processing
 - **Automatic input pre-gain** - input peak is measured (ffmpeg volumedetect) and quiet inputs are boosted toward -3 dBFS (max +30 dB, never boosts silence); hot inputs are pulled back. No user setting needed
 - **Loudness normalization** - optional two-pass EBU R128 on `target.wav` (-16 LUFS integrated, -3 dB true peak), via Streamlit checkbox / `loudness_normalize` payload / `--loudness-normalize`
 

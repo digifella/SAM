@@ -129,6 +129,21 @@ class ExtractAudioTests(unittest.TestCase):
             self.assertEqual(wav.name, "clip.wav")
             self.assertAlmostEqual(sf.info(str(wav)).duration, 2.0, delta=0.2)
 
+    def test_mov_extraction(self):
+        from run_sam_interactive import extract_audio_to_wav
+
+        with tempfile.TemporaryDirectory() as td:
+            mp4 = Path(td) / "clip.mp4"
+            _make_test_mp4(mp4)
+            mov = Path(td) / "clip.mov"
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(mp4), "-c", "copy", str(mov)],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            wav = extract_audio_to_wav(mov, out_dir=Path(td))
+            self.assertEqual(wav.name, "clip.wav")
+            self.assertAlmostEqual(sf.info(str(wav)).duration, 2.0, delta=0.2)
+
     def test_no_audio_stream_raises(self):
         from run_sam_interactive import extract_audio_to_wav
 
@@ -148,10 +163,10 @@ class VideoExtensionRoutingTests(unittest.TestCase):
         from run_sam_interactive import find_audio_files
 
         with tempfile.TemporaryDirectory() as td:
-            for name in ("a.wav", "b.mp4", "c.mkv", "d.txt", "e_target.wav"):
+            for name in ("a.wav", "b.mp4", "c.mkv", "d.txt", "e_target.wav", "f.mov"):
                 (Path(td) / name).touch()
             found = {p.name for p in find_audio_files(Path(td))}
-            self.assertEqual(found, {"a.wav", "b.mp4", "c.mkv"})
+            self.assertEqual(found, {"a.wav", "b.mp4", "c.mkv", "f.mov"})
 
 
 VOLUMEDETECT_STDERR = """\

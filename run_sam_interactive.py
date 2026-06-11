@@ -50,7 +50,7 @@ LOG_DIR.mkdir(exist_ok=True)
 AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'}
 
 # Video containers accepted as input; audio is extracted with ffmpeg first
-VIDEO_EXTENSIONS = {'.mp4', '.mkv'}
+VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.mov'}
 
 # Automatic input pre-gain: inputs quieter than the threshold are boosted to
 # the target peak (capped, so a noise floor is never blasted); inputs hotter
