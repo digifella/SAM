@@ -155,6 +155,28 @@ def _apply_peak_normalize(path: Path, percent: float) -> None:
     sf.write(path, out, sr, subtype="PCM_16")
 
 
+LOUDNORM_I = -16.0
+LOUDNORM_TP = -3.0
+LOUDNORM_LRA = 11.0
+_LOUDNORM_KEYS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+
+
+def _parse_loudnorm_json(stderr_text: str) -> dict:
+    """Extract the measurement JSON that ffmpeg loudnorm prints to stderr."""
+    start = stderr_text.rfind("{")
+    end = stderr_text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError(f"no loudnorm JSON in ffmpeg output: {stderr_text[-300:]}")
+    try:
+        measured = json.loads(stderr_text[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"unparseable loudnorm JSON: {exc}") from exc
+    missing = [k for k in _LOUDNORM_KEYS if k not in measured]
+    if missing:
+        raise ValueError(f"loudnorm JSON missing keys: {missing}")
+    return measured
+
+
 def _transcode_audio(path: Path, sample_rate: Optional[int], channels: Optional[int], ffmpeg_bin: str) -> Path:
     if sample_rate is None and channels is None:
         return path
