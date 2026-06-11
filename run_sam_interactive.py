@@ -18,6 +18,7 @@ import argparse
 import gc
 import json
 import logging
+import re
 import readline  # Enable arrow keys and line editing in input()
 import shutil
 import subprocess
@@ -50,6 +51,16 @@ AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'}
 
 # Video containers accepted as input; audio is extracted with ffmpeg first
 VIDEO_EXTENSIONS = {'.mp4', '.mkv'}
+
+# Automatic input pre-gain: inputs quieter than the threshold are boosted to
+# the target peak (capped, so a noise floor is never blasted); inputs hotter
+# than the hot threshold are pulled down to the target. Anything in between
+# passes through untouched.
+AUTO_GAIN_TARGET_PEAK_DB = -3.0
+AUTO_GAIN_QUIET_THRESHOLD_DB = -6.0
+AUTO_GAIN_HOT_THRESHOLD_DB = -0.3
+AUTO_GAIN_MAX_BOOST_DB = 30.0
+AUTO_GAIN_SILENCE_FLOOR_DB = -60.0  # below this it's silence/noise floor; don't boost
 
 # Safety limits
 MAX_FILES_PER_SESSION = 100  # Prevent runaway processing
@@ -575,6 +586,63 @@ def extract_audio_to_wav(path: Path, ffmpeg_bin: str = "ffmpeg", out_dir: Option
             f"ffmpeg audio extraction failed for {path.name}: {proc.stderr[-500:]}"
         )
     return out
+
+
+_VOLUMEDETECT_MAX_RE = re.compile(r"max_volume:\s*(-?(?:[0-9.]+|inf))\s*dB")
+
+
+def parse_volumedetect_max_db(stderr_text: str) -> Optional[float]:
+    """Extract max_volume (dBFS) from ffmpeg volumedetect output.
+
+    Returns None when absent or -inf (digital silence).
+    """
+    m = _VOLUMEDETECT_MAX_RE.search(stderr_text)
+    if not m or "inf" in m.group(1):
+        return None
+    return float(m.group(1))
+
+
+def decide_pregain_db(max_volume_db: Optional[float]) -> float:
+    """Gain to apply so the input peak sits at AUTO_GAIN_TARGET_PEAK_DB."""
+    if max_volume_db is None or max_volume_db <= AUTO_GAIN_SILENCE_FLOOR_DB:
+        return 0.0
+    if max_volume_db < AUTO_GAIN_QUIET_THRESHOLD_DB:
+        return min(AUTO_GAIN_TARGET_PEAK_DB - max_volume_db, AUTO_GAIN_MAX_BOOST_DB)
+    if max_volume_db > AUTO_GAIN_HOT_THRESHOLD_DB:
+        return AUTO_GAIN_TARGET_PEAK_DB - max_volume_db
+    return 0.0
+
+
+def auto_input_gain(path: Path, ffmpeg_bin: str = "ffmpeg", out_dir: Optional[Path] = None):
+    """Measure input peak and apply automatic pre-gain when needed.
+
+    Returns (path, 0.0) untouched when the level is already healthy or
+    unmeasurable (silence). Otherwise writes <stem>.wav with the gain
+    applied (same stem, so downstream output naming is unchanged) and
+    returns (new_path, gain_db). When out_dir is None a fresh temp dir is
+    created; the caller owns cleanup of the returned file's parent.
+    """
+    cmd = [
+        ffmpeg_bin, "-hide_banner", "-nostats",
+        "-i", str(path), "-af", "volumedetect", "-f", "null", "-",
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg volumedetect failed for {path.name}: {proc.stderr[-500:]}")
+
+    gain_db = decide_pregain_db(parse_volumedetect_max_db(proc.stderr))
+    if gain_db == 0.0:
+        return path, 0.0
+
+    if out_dir is None:
+        out_dir = Path(tempfile.mkdtemp(prefix="sam_pregain_"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{path.stem}.wav"
+    cmd = [ffmpeg_bin, "-y", "-i", str(path), "-af", f"volume={gain_db:+.2f}dB", str(out)]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0 or not out.exists():
+        raise RuntimeError(f"ffmpeg pre-gain failed for {path.name}: {proc.stderr[-500:]}")
+    return out, gain_db
 
 
 def get_unique_output_path(output_dir: Path, stem: str, suffix: str = '.wav') -> Path:
@@ -1228,11 +1296,17 @@ def batch_process(
 
             processed_files.add(file_id)
             process_path = audio_file
-            extracted_dir = None
+            temp_dirs = []
             if audio_file.suffix.lower() in VIDEO_EXTENSIONS:
                 print(f"  Extracting audio track from {audio_file.name} ...")
                 process_path = extract_audio_to_wav(audio_file)
-                extracted_dir = process_path.parent
+                temp_dirs.append(process_path.parent)
+
+            gained_path, pregain_db = auto_input_gain(process_path)
+            if pregain_db != 0.0:
+                print(f"  Auto input gain: {pregain_db:+.1f} dB (peak -> {AUTO_GAIN_TARGET_PEAK_DB:.0f} dBFS)")
+                process_path = gained_path
+                temp_dirs.append(gained_path.parent)
             success = process_audio_file(
                 process_path,
                 description,
@@ -1248,8 +1322,8 @@ def batch_process(
                 convert_to_mono,
             )
 
-            if extracted_dir is not None:
-                shutil.rmtree(extracted_dir, ignore_errors=True)
+            for temp_dir in temp_dirs:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
             if success:
                 success_count += 1

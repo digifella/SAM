@@ -180,6 +180,7 @@ def main() -> None:
         predict_spans = st.checkbox("Predict spans", value=False)
 
         st.subheader("Optional transforms")
+        st.caption("Input level is adjusted automatically before processing: quiet inputs are boosted toward -3 dBFS peak (max +30 dB), hot inputs pulled back.")
         trial_seconds = st.number_input("Trial only first N seconds (0 = full)", min_value=0, max_value=86400, value=0, step=5)
         normalize_percent = st.number_input("Normalize peak (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
         loudness_normalize = st.checkbox(

@@ -23,6 +23,7 @@ from run_sam_interactive import (
     VIDEO_EXTENSIONS,
     apply_cuda_memory_fraction_safely,
     aggressive_cleanup,
+    auto_input_gain,
     count_chunks,
     extract_audio_to_wav,
     get_audio_duration,
@@ -339,6 +340,11 @@ def handle(
         if trial_seconds > 0:
             _safe_progress(progress_cb, 10, f"Applying trial cut ({trial_seconds}s)", "preprocess")
             process_input = _apply_trial_cut(process_input, trial_seconds, ffmpeg_bin, work_dir)
+
+        process_input, pregain_db = auto_input_gain(process_input, ffmpeg_bin, out_dir=work_dir / "pregain")
+        if pregain_db != 0.0:
+            _safe_progress(progress_cb, 12, f"Auto input gain {pregain_db:+.1f} dB", "preprocess")
+            logger.info("Auto input pre-gain applied: %+.2f dB", pregain_db)
 
         if is_cancelled_cb and is_cancelled_cb():
             raise RuntimeError("Cancelled before processing started")

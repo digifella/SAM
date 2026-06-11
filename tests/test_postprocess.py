@@ -141,5 +141,108 @@ class VideoExtensionRoutingTests(unittest.TestCase):
             self.assertEqual(found, {"a.wav", "b.mp4", "c.mkv"})
 
 
+VOLUMEDETECT_STDERR = """\
+[Parsed_volumedetect_0 @ 0x60d1c4] n_samples: 2764800
+[Parsed_volumedetect_0 @ 0x60d1c4] mean_volume: -38.2 dB
+[Parsed_volumedetect_0 @ 0x60d1c4] max_volume: -28.5 dB
+[Parsed_volumedetect_0 @ 0x60d1c4] histogram_28db: 21
+"""
+
+
+class ParseVolumedetectTests(unittest.TestCase):
+    def test_parses_max_volume(self):
+        from run_sam_interactive import parse_volumedetect_max_db
+
+        self.assertEqual(parse_volumedetect_max_db(VOLUMEDETECT_STDERR), -28.5)
+
+    def test_missing_max_volume_returns_none(self):
+        from run_sam_interactive import parse_volumedetect_max_db
+
+        self.assertIsNone(parse_volumedetect_max_db("no volume info here"))
+
+    def test_inf_silence_returns_none(self):
+        from run_sam_interactive import parse_volumedetect_max_db
+
+        self.assertIsNone(parse_volumedetect_max_db("max_volume: -inf dB"))
+
+
+class DecidePregainTests(unittest.TestCase):
+    def test_quiet_input_boosted_to_target(self):
+        from run_sam_interactive import decide_pregain_db
+
+        self.assertAlmostEqual(decide_pregain_db(-28.5), 25.5)
+
+    def test_boost_capped(self):
+        from run_sam_interactive import decide_pregain_db
+
+        self.assertAlmostEqual(decide_pregain_db(-50.0), 30.0)
+
+    def test_healthy_level_untouched(self):
+        from run_sam_interactive import decide_pregain_db
+
+        self.assertEqual(decide_pregain_db(-4.4), 0.0)
+        self.assertEqual(decide_pregain_db(-3.0), 0.0)
+        self.assertEqual(decide_pregain_db(-6.0), 0.0)
+
+    def test_hot_input_reduced_to_target(self):
+        from run_sam_interactive import decide_pregain_db
+
+        self.assertAlmostEqual(decide_pregain_db(0.0), -3.0)
+
+    def test_unmeasurable_untouched(self):
+        from run_sam_interactive import decide_pregain_db
+
+        self.assertEqual(decide_pregain_db(None), 0.0)
+
+    def test_silence_floor_untouched(self):
+        from run_sam_interactive import decide_pregain_db
+
+        self.assertEqual(decide_pregain_db(-91.0), 0.0)
+        self.assertEqual(decide_pregain_db(-60.0), 0.0)
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not on PATH")
+class AutoInputGainTests(unittest.TestCase):
+    def _write_tone(self, path: Path, amplitude: float) -> None:
+        sr = 48000
+        t = np.linspace(0, 2.0, 2 * sr, endpoint=False)
+        sf.write(path, (amplitude * np.sin(2 * np.pi * 440 * t)).astype(np.float32), sr)
+
+    def test_quiet_input_gets_boosted(self):
+        from run_sam_interactive import auto_input_gain
+
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "quiet.wav"
+            self._write_tone(src, 0.01)  # peak ~= -40 dBFS
+            out, gain_db = auto_input_gain(src, out_dir=Path(td) / "gain")
+            self.assertNotEqual(out, src)
+            self.assertEqual(out.name, "quiet.wav")
+            # peak -40 dBFS needs +37 dB to reach -3; boost is capped at +30
+            self.assertAlmostEqual(gain_db, 30.0, delta=0.3)
+            data, _ = sf.read(out)
+            peak_db = 20 * np.log10(np.max(np.abs(data)))
+            self.assertAlmostEqual(peak_db, -10.0, delta=1.5)  # -40 + 30 cap
+
+    def test_healthy_input_passthrough(self):
+        from run_sam_interactive import auto_input_gain
+
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "ok.wav"
+            self._write_tone(src, 0.6)  # peak ~= -4.4 dBFS
+            out, gain_db = auto_input_gain(src, out_dir=Path(td) / "gain")
+            self.assertEqual(out, src)
+            self.assertEqual(gain_db, 0.0)
+
+    def test_silence_passthrough(self):
+        from run_sam_interactive import auto_input_gain
+
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "silence.wav"
+            sf.write(src, np.zeros(48000, dtype=np.float32), 48000)
+            out, gain_db = auto_input_gain(src, out_dir=Path(td) / "gain")
+            self.assertEqual(out, src)
+            self.assertEqual(gain_db, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
