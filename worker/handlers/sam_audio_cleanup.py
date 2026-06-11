@@ -177,6 +177,41 @@ def _parse_loudnorm_json(stderr_text: str) -> dict:
     return measured
 
 
+def _measure_loudness(path: Path, ffmpeg_bin: str) -> dict:
+    cmd = [
+        ffmpeg_bin, "-hide_banner", "-nostats",
+        "-i", str(path),
+        "-af", f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}:print_format=json",
+        "-f", "null", "-",
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg loudness measurement failed: {proc.stderr[-500:]}")
+    return _parse_loudnorm_json(proc.stderr)
+
+
+def _apply_loudness_normalize(path: Path, ffmpeg_bin: str) -> None:
+    """Two-pass EBU R128 normalization to -16 LUFS / -3 dB true peak.
+
+    linear=true applies a single clean gain (no dynamics processing).
+    loudnorm resamples to 192k internally, so pin the original rate back.
+    """
+    measured = _measure_loudness(path, ffmpeg_bin)
+    sample_rate = sf.info(str(path)).samplerate
+    out = path.with_name(f"{path.stem}_loudnorm.wav")
+    af = (
+        f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}"
+        f":measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
+        f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
+        f":offset={measured['target_offset']}:linear=true"
+    )
+    cmd = [ffmpeg_bin, "-y", "-i", str(path), "-af", af, "-ar", str(sample_rate), str(out)]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg loudnorm failed: {proc.stderr[-500:]}")
+    out.replace(path)
+
+
 def _transcode_audio(path: Path, sample_rate: Optional[int], channels: Optional[int], ffmpeg_bin: str) -> Path:
     if sample_rate is None and channels is None:
         return path
@@ -266,6 +301,7 @@ def handle(
 
     trial_seconds = _clamp_int(payload.get("trial_seconds"), 0, 0, 86400)
     normalize_percent = _clamp_float(payload.get("normalize_percent"), 0.0, 0.0, 100.0)
+    loudness_normalize = _as_bool(payload.get("loudness_normalize"), False)
 
     output_sample_rate = payload.get("output_sample_rate")
     if output_sample_rate is not None:
@@ -472,6 +508,12 @@ def handle(
             _safe_progress(progress_cb, 75, f"Normalizing to {normalize_percent:.1f}% peak", "postprocess")
             _apply_peak_normalize(target_path, normalize_percent)
             _apply_peak_normalize(residual_path, normalize_percent)
+            if is_cancelled_cb and is_cancelled_cb():
+                raise RuntimeError("Cancelled during post-processing")
+
+        if loudness_normalize:
+            _safe_progress(progress_cb, 78, "Loudness normalizing target (-16 LUFS, -3 dB TP)", "postprocess")
+            _apply_loudness_normalize(target_path, ffmpeg_bin)
             if is_cancelled_cb and is_cancelled_cb():
                 raise RuntimeError("Cancelled during post-processing")
 

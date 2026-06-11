@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
 
 from worker.handlers.sam_audio_cleanup import _parse_loudnorm_json
 
@@ -43,6 +49,29 @@ class ParseLoudnormJsonTests(unittest.TestCase):
     def test_missing_key_raises(self):
         with self.assertRaises(ValueError):
             _parse_loudnorm_json('{\n  "input_i" : "-27.61"\n}\n')
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not on PATH")
+class LoudnormRoundTripTests(unittest.TestCase):
+    def test_quiet_tone_lands_at_minus_16_lufs(self):
+        from worker.handlers.sam_audio_cleanup import (
+            _apply_loudness_normalize,
+            _measure_loudness,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "tone.wav"
+            sr = 48000
+            t = np.linspace(0, 4.0, 4 * sr, endpoint=False)
+            sf.write(path, (0.01 * np.sin(2 * np.pi * 440 * t)).astype(np.float32), sr)
+
+            _apply_loudness_normalize(path, "ffmpeg")
+
+            measured = _measure_loudness(path, "ffmpeg")
+            self.assertAlmostEqual(float(measured["input_i"]), -16.0, delta=1.0)
+            self.assertLessEqual(float(measured["input_tp"]), -2.9)
+            info = sf.info(str(path))
+            self.assertEqual(info.samplerate, sr)
 
 
 if __name__ == "__main__":
