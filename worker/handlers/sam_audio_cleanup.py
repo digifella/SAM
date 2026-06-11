@@ -15,7 +15,9 @@ from typing import Any, Callable, Optional
 import numpy as np
 import soundfile as sf
 import torch
-from sam_audio import SAMAudio, SAMAudioProcessor
+from sam_audio import SAMAudioProcessor
+
+from sam_audio_local.loader import load_sam_audio_optimized
 
 from run_sam_interactive import (
     apply_cuda_memory_fraction_safely,
@@ -61,7 +63,7 @@ class _ModelCache:
                         float(effective_fraction),
                     )
 
-                model = SAMAudio.from_pretrained(model_dir_str).eval().to(device)
+                model = load_sam_audio_optimized(model_dir_str, device)
                 processor = SAMAudioProcessor.from_pretrained(model_dir_str)
                 patch_sam_audio_model(model)
 

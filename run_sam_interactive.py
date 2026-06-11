@@ -34,6 +34,7 @@ import torch
 from sam_audio import SAMAudio, SAMAudioProcessor
 from sam_audio.model.model import SeparationResult, DFLT_ODE_OPT
 from sam_audio.processor import Batch
+from sam_audio_local.loader import load_sam_audio_optimized
 from torchdiffeq import odeint
 
 # Default configuration file
@@ -1178,7 +1179,7 @@ def batch_process(
 
     # Load model once
     print(f"\nLoading model from {model_dir}...")
-    model = SAMAudio.from_pretrained(str(model_dir)).eval().to(device)
+    model = load_sam_audio_optimized(model_dir, device)
     processor = SAMAudioProcessor.from_pretrained(str(model_dir))
     print(f"✓ Model loaded")
 
@@ -1312,7 +1313,7 @@ def interactive_mode():
     )
 
     rerank = get_user_input(
-        "Reranking candidates (1-8)",
+        "Reranking candidates (unavailable in memory-optimized build; use 1)",
         config["rerank"],
         int
     )
