@@ -74,6 +74,19 @@ class LoudnormRoundTripTests(unittest.TestCase):
             info = sf.info(str(path))
             self.assertEqual(info.samplerate, sr)
 
+    def test_silent_audio_skips_normalization(self):
+        from worker.handlers.sam_audio_cleanup import _apply_loudness_normalize
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "silence.wav"
+            sr = 48000
+            sf.write(path, np.zeros(4 * sr, dtype=np.float32), sr)
+            before = path.read_bytes()
+
+            _apply_loudness_normalize(path, "ffmpeg")
+
+            self.assertEqual(path.read_bytes(), before)
+
 
 def _make_test_mp4(path: Path) -> None:
     cmd = [
@@ -242,6 +255,52 @@ class AutoInputGainTests(unittest.TestCase):
             out, gain_db = auto_input_gain(src, out_dir=Path(td) / "gain")
             self.assertEqual(out, src)
             self.assertEqual(gain_db, 0.0)
+
+
+class SeparationSanityTests(unittest.TestCase):
+    def _write_tone(self, path: Path, amplitude: float) -> None:
+        sr = 16000
+        t = np.linspace(0, 2.0, 2 * sr, endpoint=False)
+        sf.write(path, (amplitude * np.sin(2 * np.pi * 440 * t)).astype(np.float32), sr)
+
+    def _write_silence(self, path: Path) -> None:
+        sf.write(path, np.zeros(2 * 16000, dtype=np.float32), 16000)
+
+    def test_silent_target_produces_warning(self):
+        from worker.handlers.sam_audio_cleanup import _separation_sanity_warning
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "x_target.wav"
+            residual = Path(td) / "x_residual.wav"
+            self._write_silence(target)
+            self._write_tone(residual, 0.3)
+
+            warning = _separation_sanity_warning(target, residual, "remove background static")
+            self.assertIsNotNone(warning)
+            self.assertIn("remove background static", warning)
+            self.assertIn("residual", warning)
+
+    def test_audible_target_no_warning(self):
+        from worker.handlers.sam_audio_cleanup import _separation_sanity_warning
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "x_target.wav"
+            residual = Path(td) / "x_residual.wav"
+            self._write_tone(target, 0.3)
+            self._write_tone(residual, 0.1)
+
+            self.assertIsNone(_separation_sanity_warning(target, residual, "speech"))
+
+    def test_very_quiet_target_produces_warning(self):
+        from worker.handlers.sam_audio_cleanup import _separation_sanity_warning
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "x_target.wav"
+            residual = Path(td) / "x_residual.wav"
+            self._write_tone(target, 0.0001)  # ~ -80 dBFS RMS
+            self._write_tone(residual, 0.3)
+
+            self.assertIsNotNone(_separation_sanity_warning(target, residual, "speech"))
 
 
 if __name__ == "__main__":

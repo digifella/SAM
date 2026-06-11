@@ -290,6 +290,8 @@ def main() -> None:
         st.code(log_tail, language="text")
 
     if st.session_state.result_output_data:
+        if st.session_state.result_output_data.get("warning"):
+            st.warning(st.session_state.result_output_data["warning"])
         st.subheader("Metadata")
         st.json(st.session_state.result_output_data)
 

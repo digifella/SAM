@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -158,6 +159,33 @@ def _apply_peak_normalize(path: Path, percent: float) -> None:
     sf.write(path, out, sr, subtype="PCM_16")
 
 
+SILENT_RMS_DBFS = -60.0
+
+
+def _rms_dbfs(path: Path) -> float:
+    data, _ = sf.read(path, always_2d=False)
+    arr = np.asarray(data, dtype=np.float64)
+    rms = float(np.sqrt(np.mean(np.square(arr)))) if arr.size else 0.0
+    if rms <= 0.0:
+        return float("-inf")
+    return 20.0 * math.log10(rms)
+
+
+def _separation_sanity_warning(target_path: Path, residual_path: Path, description: str) -> Optional[str]:
+    """Detect a near-silent target: the description matched nothing in the audio."""
+    target_db = _rms_dbfs(target_path)
+    if target_db >= SILENT_RMS_DBFS:
+        return None
+    residual_db = _rms_dbfs(residual_path)
+    return (
+        f"Target output is near-silent ({target_db:.1f} dBFS RMS) - the description "
+        f"'{description}' may not match any sound in the audio. SAM-Audio extracts the "
+        f"sound you DESCRIBE (e.g. 'a man speaking over a radio'), it does not follow "
+        f"instructions like 'remove X'. The unextracted audio is in residual.wav "
+        f"({residual_db:.1f} dBFS RMS)."
+    )
+
+
 LOUDNORM_I = -16.0
 LOUDNORM_TP = -3.0
 LOUDNORM_LRA = 11.0
@@ -200,6 +228,12 @@ def _apply_loudness_normalize(path: Path, ffmpeg_bin: str) -> None:
     loudnorm resamples to 192k internally, so pin the original rate back.
     """
     measured = _measure_loudness(path, ffmpeg_bin)
+    if not all(math.isfinite(float(measured[k])) for k in _LOUDNORM_KEYS):
+        logger.warning(
+            "Skipping loudness normalization for %s: silent/near-silent audio "
+            "(measured input_i=%s)", path.name, measured["input_i"],
+        )
+        return
     sample_rate = sf.info(str(path)).samplerate
     out = path.with_name(f"{path.stem}_loudnorm.wav")
     af = (
@@ -516,6 +550,11 @@ def handle(
         target_path = _find_single_output(output_dir, "_target")
         residual_path = _find_single_output(output_dir, "_residual")
 
+        separation_warning = _separation_sanity_warning(target_path, residual_path, description)
+        if separation_warning:
+            logger.warning(separation_warning)
+            _safe_progress(progress_cb, 72, "Warning: target output is near-silent", "postprocess")
+
         if normalize_percent > 0:
             _safe_progress(progress_cb, 75, f"Normalizing to {normalize_percent:.1f}% peak", "postprocess")
             _apply_peak_normalize(target_path, normalize_percent)
@@ -562,6 +601,8 @@ def handle(
                 "allow_cpu_fallback": allow_cpu_fallback,
             },
         }
+        if separation_warning:
+            metadata["warning"] = separation_warning
 
         zip_path = work_dir / "audio_cleanup_result.zip"
         _safe_progress(progress_cb, 90, "Packaging result ZIP", "package")
