@@ -58,6 +58,8 @@ streamlit run streamlit_app.py
 
 The app lets you upload one file, tune key options (trial seconds, normalize %, sample rate/channels, chunking, rerank), run local processing, preview `target.wav` and `residual.wav`, and download the ZIP output.
 
+The local Streamlit upload limit is set in `.streamlit/config.toml` with `server.maxUploadSize = 4096`, allowing files up to 4 GB.
+
 ## Colab Smoke Test (No Streamlit)
 
 To test the same processing pipeline on Google Colab (single file, conservative memory settings), use:

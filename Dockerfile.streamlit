@@ -16,6 +16,7 @@ RUN pip install --upgrade pip && \
     pip install -r streamlit_requirements.txt
 
 COPY streamlit_app.py streamlit_app.py
+COPY .streamlit .streamlit
 COPY sam_audio_utils sam_audio_utils
 
 # Mount model weights + outputs at runtime:

@@ -1,6 +1,8 @@
 [server]
 # Prevent Streamlit from crawling torch internals and spamming warnings.
 fileWatcherType = "none"
+# Allow larger local video uploads. Value is in megabytes.
+maxUploadSize = 4096
 
 [logger]
 level = "warning"
