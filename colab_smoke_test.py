@@ -37,6 +37,7 @@ def main() -> int:
     ap.add_argument("--no-cpu-fallback", action="store_false", dest="allow_cpu_fallback")
     ap.add_argument("--trial-seconds", type=int, default=0)
     ap.add_argument("--normalize-percent", type=float, default=0.0)
+    ap.add_argument("--loudness-normalize", action="store_true")
     ap.add_argument("--output-sample-rate", type=int, default=0)
     ap.add_argument("--output-channels", type=int, default=0)
 
@@ -64,6 +65,7 @@ def main() -> int:
         "allow_cpu_fallback": bool(args.allow_cpu_fallback),
         "trial_seconds": int(args.trial_seconds),
         "normalize_percent": float(args.normalize_percent),
+        "loudness_normalize": bool(args.loudness_normalize),
     }
 
     if args.output_sample_rate > 0:

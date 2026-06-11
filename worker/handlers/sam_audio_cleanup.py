@@ -20,9 +20,11 @@ from sam_audio import SAMAudioProcessor
 from sam_audio_local.loader import load_sam_audio_optimized
 
 from run_sam_interactive import (
+    VIDEO_EXTENSIONS,
     apply_cuda_memory_fraction_safely,
     aggressive_cleanup,
     count_chunks,
+    extract_audio_to_wav,
     get_audio_duration,
     patch_sam_audio_model,
     process_audio_file,
@@ -330,9 +332,13 @@ def handle(
 
     process_input = input_path
     try:
+        if input_path.suffix.lower() in VIDEO_EXTENSIONS:
+            _safe_progress(progress_cb, 8, "Extracting audio track from video", "preprocess")
+            process_input = extract_audio_to_wav(input_path, ffmpeg_bin, out_dir=work_dir)
+
         if trial_seconds > 0:
             _safe_progress(progress_cb, 10, f"Applying trial cut ({trial_seconds}s)", "preprocess")
-            process_input = _apply_trial_cut(input_path, trial_seconds, ffmpeg_bin, work_dir)
+            process_input = _apply_trial_cut(process_input, trial_seconds, ffmpeg_bin, work_dir)
 
         if is_cancelled_cb and is_cancelled_cb():
             raise RuntimeError("Cancelled before processing started")

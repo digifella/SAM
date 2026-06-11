@@ -182,6 +182,11 @@ def main() -> None:
         st.subheader("Optional transforms")
         trial_seconds = st.number_input("Trial only first N seconds (0 = full)", min_value=0, max_value=86400, value=0, step=5)
         normalize_percent = st.number_input("Normalize peak (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+        loudness_normalize = st.checkbox(
+            "Loudness-normalize target (-16 LUFS, -3 dB true peak)",
+            value=False,
+            help="Two-pass EBU R128 on target.wav only, applied after peak normalize (overrides it for target). residual.wav is untouched.",
+        )
 
         sample_rate_choice = st.selectbox(
             "Output sample rate",
@@ -199,8 +204,8 @@ def main() -> None:
         clear_logs_on_start = st.checkbox("Clear old ~/.sam_audio_logs on each new run", value=True)
 
     uploaded = st.file_uploader(
-        "Upload audio file",
-        type=["wav", "mp3", "flac", "ogg", "m4a", "aac"],
+        "Upload audio or video file",
+        type=["wav", "mp3", "flac", "ogg", "m4a", "aac", "mp4", "mkv"],
         accept_multiple_files=False,
     )
 
@@ -221,6 +226,7 @@ def main() -> None:
             "predict_spans": bool(predict_spans),
             "trial_seconds": int(trial_seconds),
             "normalize_percent": float(normalize_percent),
+            "loudness_normalize": bool(loudness_normalize),
             "model_dir": model_dir,
             "device": device,
             "memory_fraction": float(memory_fraction),
