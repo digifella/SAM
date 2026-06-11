@@ -175,7 +175,8 @@ def main() -> None:
         convert_to_mono = st.checkbox("Convert to mono 16k first", value=True)
         chunk_duration = st.number_input("Chunk duration (s)", min_value=5, max_value=600, value=60, step=5)
         overlap = st.number_input("Chunk overlap (s)", min_value=0.0, max_value=30.0, value=2.0, step=0.5)
-        rerank = st.slider("Rerank candidates", min_value=1, max_value=8, value=1)
+        rerank = 1
+        st.caption("Rerank candidates: 1 (reranking unavailable in memory-optimized build)")
         predict_spans = st.checkbox("Predict spans", value=False)
 
         st.subheader("Optional transforms")

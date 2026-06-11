@@ -62,12 +62,15 @@ A single entry point, e.g. `load_sam_audio_optimized(model_dir, device)`:
    `sam_audio.model.model.PerceptionEncoder`) with a zero-parameter stub
    that raises if ever called, so no PE weights are downloaded or
    allocated.
-3. **Avoid the CPU RAM spike:** instantiate the model with empty/meta
-   weights for the checkpoint-backed modules, load the checkpoint with
+3. **Avoid the CPU RAM spike:** load the checkpoint with
    `torch.load(..., mmap=True, weights_only=True)`, filter out
-   `vision_encoder.*` keys, and `load_state_dict(strict=False,
-   assign=True)`. Verify that the only missing/unexpected keys are the
-   deliberately stripped modules; raise otherwise.
+   `vision_encoder.*` keys, cast modules to fp16 first, then
+   `load_state_dict(...)` with the default `assign=False` so `copy_`
+   converts each mmap'd fp32 tensor into the fp16 param one tensor at a
+   time (note: `assign=True` would replace the fp16 params with the fp32
+   checkpoint tensors, defeating the cast). Verify that the only
+   missing/unexpected keys are the deliberately stripped modules; raise
+   otherwise.
 4. **Precision:** cast checkpoint-backed modules (DiT, DACVAE, proj
    layers) to **fp16** (native on Turing). The T5 text encoder stays
    **fp32** (T5 is fp16-fragile; ~0.5 GB). Span predictor
@@ -117,10 +120,11 @@ Measured resident VRAM: DiT 5.9 GB + span predictor 6.1 GB (fp32) + T5
 - **fp16 numeric drift** in the ODE solve or DACVAE decode → audible
   artifacts. Mitigation: listening check; per-module fp32 fallback knobs
   if needed.
-- **`assign=True` + mmap interaction**: tensors remain disk-backed until
-  moved to GPU, so `.to(device)` streams the checkpoint from disk. The
-  checkpoint lives on ext4 (`~/models`), not a Windows mount, so this is
-  fast; the fp16 cast also materializes tensors in RAM incrementally
-  (one tensor at a time), staying far below the 23 GB ceiling.
+- **mmap + `copy_` interaction**: `load_state_dict` with the default
+  `assign=False` reads each mmap'd checkpoint tensor and copies it into
+  the pre-cast fp16 param one tensor at a time, so RAM holds only page
+  cache (reclaimable) plus one tensor — staying far below the 23 GB
+  ceiling. The checkpoint lives on ext4 (`~/models`), not a Windows
+  mount, so the read is fast.
 - **Upstream drift**: pinned by the fail-fast key verification in the
   loader.
