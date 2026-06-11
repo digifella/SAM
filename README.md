@@ -11,6 +11,22 @@ Memory-optimized interactive batch processor for SAM-Audio with chunking support
 - **Progress tracking** - Real-time progress updates and detailed logging
 - **GPU accelerated** - CUDA support with configurable memory limits
 
+## Memory-Optimized Local Loading (RTX 8000 / 48GB)
+
+`sam_audio_local/loader.py` loads SAM-Audio large in ~13GB resident VRAM
+(vs ~31GB stock) by:
+
+- stripping the vision encoder and ImageBind/CLAP/Judge rerankers
+  (text-prompted separation only; `rerank` is pinned to 1)
+- casting the DiT/codec to fp16 (native on Turing); the T5 text encoder
+  and span predictor stay fp32
+- mmap-loading the 14.9GB checkpoint so model load stays under the WSL2
+  system-RAM ceiling
+
+All entry points (`run_sam_interactive.py`, `streamlit_app.py`, the queue
+worker) use this loader automatically. Video prompting and reranking
+require the stock `SAMAudio.from_pretrained()` path (e.g. on Colab).
+
 ## Quick Start
 
 ```bash
