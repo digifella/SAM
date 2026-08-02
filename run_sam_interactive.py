@@ -1173,6 +1173,13 @@ def process_audio_file(
 
         return True
 
+    except JobCancelledError:
+        # A cancellation is not an error: skip the error logging/traceback
+        # noise below and let it propagate with its original type so callers
+        # (worker.py's except JobCancelledError branch) can distinguish it
+        # from a genuine processing failure. finally: below still runs.
+        raise
+
     except Exception as e:
         print(f"\n✗ ERROR: {e}")
         logger.error(f"ERROR: {e}", exc_info=True)
