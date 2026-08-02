@@ -31,6 +31,13 @@ class DummyClient:
         return None
 
 
+class FailingCompleteClient(DummyClient):
+    """DummyClient whose complete() always raises, to simulate an upload failure."""
+
+    def complete(self, job_id: int, output_data: dict, output_file: Path | None):
+        raise ConnectionError("simulated upload blip")
+
+
 class WorkerCoreTests(unittest.TestCase):
     def test_parse_input_data_variants(self):
         self.assertEqual(w.parse_input_data(None), {})
@@ -119,6 +126,48 @@ class WorkerCoreTests(unittest.TestCase):
             self.assertEqual(len(client.failed), 0)
             self.assertIsNotNone(received["work_dir"])
             self.assertTrue(str(received["work_dir"]).startswith(str(cfg.temp_dir)))
+
+    def test_process_job_upload_failure_preserves_work_dir(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            output_file = td_path / "result.zip"
+            output_file.write_bytes(b"zip")
+            received = {}
+
+            def fake_handler(input_path, input_data, job, progress_cb=None, work_dir=None):
+                received["work_dir"] = work_dir
+                return {"output_data": {"ok": True}, "output_file": output_file}
+
+            cfg = w.Config(
+                server_url="https://example.com",
+                secret_key="x",
+                poll_interval=1,
+                worker_id="test",
+                supported_types="sam_audio_cleanup",
+                log_level="INFO",
+                temp_dir=td_path / "tmp",
+                heartbeat_interval=60,
+                request_timeout=10,
+            )
+            cfg.temp_dir.mkdir(parents=True, exist_ok=True)
+
+            client = FailingCompleteClient()
+            job = {
+                "id": 11,
+                "type": "sam_audio_cleanup",
+                "input_filename": "",
+                "input_data": "{}",
+            }
+
+            with patch.object(w, "get_handler", return_value=fake_handler):
+                w.process_job(client, cfg, job)
+
+            # Upload failure must not be reported as a processing failure.
+            self.assertEqual(client.failed, [])
+            self.assertEqual(client.completed, [])
+            # And the computed output must survive so it is recoverable.
+            self.assertIsNotNone(received["work_dir"])
+            self.assertTrue(received["work_dir"].exists())
 
     def test_process_job_unsupported_type(self):
         with tempfile.TemporaryDirectory() as td:

@@ -218,6 +218,7 @@ def process_job(client: QueueClient, cfg: Config, job: dict) -> None:
 
     hb = HeartbeatThread(client, job_id, cfg.heartbeat_interval)
     hb.start()
+    preserve_work_dir = False
     try:
         input_filename = str(job.get("input_filename", "") or "")
         if input_filename:
@@ -247,7 +248,16 @@ def process_job(client: QueueClient, cfg: Config, job: dict) -> None:
         if not isinstance(output_data, dict):
             output_data = {"result": output_data}
 
-        client.complete(job_id, output_data=output_data, output_file=output_file)
+        try:
+            client.complete(job_id, output_data=output_data, output_file=output_file)
+        except Exception:
+            preserve_work_dir = True
+            logging.exception(
+                "Job id=%s succeeded but result upload failed; preserving output at %s",
+                job_id,
+                work_dir,
+            )
+            return
         logging.info("Completed job id=%s", job_id)
     except JobCancelledError as e:
         logging.warning("Job id=%s cancelled: %s", job_id, e)
@@ -264,7 +274,8 @@ def process_job(client: QueueClient, cfg: Config, job: dict) -> None:
     finally:
         hb.stop()
         hb.join(timeout=2)
-        shutil.rmtree(work_dir, ignore_errors=True)
+        if not preserve_work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def run_worker(cfg: Config) -> int:
