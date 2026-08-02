@@ -854,8 +854,19 @@ def merge_chunks(chunks: list, overlap: float, sample_rate: int) -> np.ndarray:
 
     overlap_samples = int(overlap * sample_rate)
 
-    # Calculate total length (with buffer for rounding errors)
-    total_samples = sum(len(c) for c in chunks) - (len(chunks) - 1) * overlap_samples
+    # Calculate total length by walking the same position arithmetic the
+    # merge loop below uses, rather than assuming every chunk contributes a
+    # full overlap_samples of overlap. That assumption is false for trailing
+    # chunks shortened by chunk_audio_generator's end-of-file clamp on
+    # high-overlap profiles, where it can undershoot to a negative length.
+    pos = len(chunks[0]) - overlap_samples
+    total_samples = len(chunks[0])
+    for chunk in chunks[1:]:
+        actual_overlap = min(overlap_samples, len(chunk))
+        total_samples = max(total_samples, pos + len(chunk))
+        pos += len(chunk) - actual_overlap
+    total_samples = max(total_samples, 0)
+
     merged = np.zeros(total_samples, dtype=chunks[0].dtype)
 
     pos = 0
