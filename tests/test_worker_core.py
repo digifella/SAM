@@ -127,6 +127,10 @@ class WorkerCoreTests(unittest.TestCase):
             self.assertEqual(len(client.failed), 0)
             self.assertIsNotNone(received["work_dir"])
             self.assertTrue(str(received["work_dir"]).startswith(str(cfg.temp_dir)))
+            # F3's finally: only skips rmtree when the upload failed; on a
+            # normal success it must still delete work_dir, or every
+            # successful job leaks a directory forever.
+            self.assertFalse(received["work_dir"].exists())
 
     def test_process_job_upload_failure_preserves_work_dir(self):
         with tempfile.TemporaryDirectory() as td:
@@ -199,6 +203,46 @@ class WorkerCoreTests(unittest.TestCase):
             self.assertEqual(len(client.failed), 1)
             self.assertEqual(client.failed[0][0], 13)
             self.assertEqual(client.completed, [])
+
+    def test_process_job_heartbeat_start_failure_fails_job_and_cleans_up(self):
+        # F4 covers two failure points under the same try: mkdtemp (above) and
+        # hb.start(). Here mkdtemp succeeds (so a work_dir is actually
+        # created) but hb.start() raises, to prove the leaked-directory half
+        # of F4 is also covered, not just the mkdtemp half.
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            cfg = w.Config(
+                server_url="https://example.com",
+                secret_key="x",
+                poll_interval=1,
+                worker_id="test",
+                supported_types="sam_audio_cleanup",
+                log_level="INFO",
+                temp_dir=td_path / "tmp",
+                heartbeat_interval=60,
+                request_timeout=10,
+            )
+            cfg.temp_dir.mkdir(parents=True, exist_ok=True)
+
+            client = DummyClient()
+            job = {"id": 17, "type": "sam_audio_cleanup", "input_data": "{}"}
+
+            def fake_handler(input_path, input_data, job, progress_cb=None):
+                raise AssertionError("handler must not run when heartbeat setup fails")
+
+            with patch.object(w, "get_handler", return_value=fake_handler), \
+                 patch.object(w.HeartbeatThread, "start", side_effect=RuntimeError("thread start failed")):
+                w.process_job(client, cfg, job)  # must not raise
+
+            self.assertEqual(len(client.failed), 1)
+            self.assertEqual(client.failed[0][0], 17)
+            # The fail message must be hb.start()'s own error, not the
+            # handler's assertion -- proving the job was failed during setup
+            # and the handler genuinely never ran.
+            self.assertIn("thread start failed", client.failed[0][1])
+            self.assertEqual(client.completed, [])
+            # The work_dir mkdtemp created before hb.start() raised must not leak.
+            self.assertEqual(list(cfg.temp_dir.iterdir()), [])
 
     def test_process_job_unsupported_type(self):
         with tempfile.TemporaryDirectory() as td:
