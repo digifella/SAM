@@ -163,6 +163,13 @@ def clear_runtime_logs() -> int:
     return removed
 
 
+def _rerun() -> None:
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
+
 def main() -> None:
     init_state()
     drain_events()
@@ -337,7 +344,7 @@ def main() -> None:
     if st.session_state.job_running:
         # Keep UI moving while background worker runs.
         time.sleep(1)
-        st.experimental_rerun()
+        _rerun()
 
 
 if __name__ == "__main__":
