@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import worker.worker as w
+from sam_audio_utils.errors import JobCancelledError as SharedJobCancelledError
 
 
 class DummyClient:
@@ -221,6 +222,45 @@ class WorkerCoreTests(unittest.TestCase):
             self.assertEqual(client.completed, [])
             self.assertEqual(len(client.failed), 1)
             self.assertIn("Unsupported job type", client.failed[0][1])
+
+    def test_job_cancelled_error_is_the_shared_class(self):
+        # worker.worker.JobCancelledError must be a re-export of the shared
+        # sam_audio_utils.errors class, not a second, unrelated class of the
+        # same name (which would silently defeat the except-clause match).
+        self.assertIs(w.JobCancelledError, SharedJobCancelledError)
+
+    def test_process_job_cancellation_uses_cancelled_by_operator_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+
+            def fake_handler(input_path, input_data, job, progress_cb=None):
+                raise w.JobCancelledError("Cancelled during post-processing")
+
+            cfg = w.Config(
+                server_url="https://example.com",
+                secret_key="x",
+                poll_interval=1,
+                worker_id="test",
+                supported_types="sam_audio_cleanup",
+                log_level="INFO",
+                temp_dir=td_path / "tmp",
+                heartbeat_interval=60,
+                request_timeout=10,
+            )
+            cfg.temp_dir.mkdir(parents=True, exist_ok=True)
+
+            client = DummyClient()
+            job = {"id": 21, "type": "sam_audio_cleanup", "input_data": "{}"}
+
+            with patch.object(w, "get_handler", return_value=fake_handler):
+                w.process_job(client, cfg, job)
+
+            # Reported via the "Cancelled by operator" path, not the generic
+            # failure path.
+            self.assertEqual(client.completed, [])
+            self.assertEqual(len(client.failed), 1)
+            self.assertIn("Cancelled by operator", client.failed[0][1])
+            self.assertIn("Cancelled during post-processing", client.failed[0][1])
 
 
 if __name__ == "__main__":

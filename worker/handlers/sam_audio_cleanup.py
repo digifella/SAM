@@ -19,6 +19,7 @@ import torch
 from sam_audio import SAMAudioProcessor
 
 from sam_audio_local.loader import load_sam_audio_optimized
+from sam_audio_utils.errors import JobCancelledError
 
 from run_sam_interactive import (
     VIDEO_EXTENSIONS,
@@ -387,7 +388,7 @@ def handle(
             logger.info("Auto input pre-gain applied: %+.2f dB", pregain_db)
 
         if is_cancelled_cb and is_cancelled_cb():
-            raise RuntimeError("Cancelled before processing started")
+            raise JobCancelledError("Cancelled before processing started")
 
         _safe_progress(progress_cb, 20, "Loading SAM-Audio model", "model")
         model, processor, device = _ModelCache.get(model_dir, device_pref, memory_fraction)
@@ -551,7 +552,7 @@ def handle(
                     raise last_error
                 raise RuntimeError("SAM-Audio processing failed")
         if is_cancelled_cb and is_cancelled_cb():
-            raise RuntimeError("Cancelled after separation")
+            raise JobCancelledError("Cancelled after separation")
 
         target_path = _find_single_output(output_dir, "_target")
         residual_path = _find_single_output(output_dir, "_residual")
@@ -566,20 +567,20 @@ def handle(
             _apply_peak_normalize(target_path, normalize_percent)
             _apply_peak_normalize(residual_path, normalize_percent)
             if is_cancelled_cb and is_cancelled_cb():
-                raise RuntimeError("Cancelled during post-processing")
+                raise JobCancelledError("Cancelled during post-processing")
 
         if loudness_normalize:
             _safe_progress(progress_cb, 78, "Loudness normalizing target (-16 LUFS, -3 dB TP)", "postprocess")
             _apply_loudness_normalize(target_path, ffmpeg_bin)
             if is_cancelled_cb and is_cancelled_cb():
-                raise RuntimeError("Cancelled during post-processing")
+                raise JobCancelledError("Cancelled during post-processing")
 
         if output_sample_rate is not None or output_channels is not None:
             _safe_progress(progress_cb, 82, "Transcoding output format", "postprocess")
             _transcode_audio(target_path, output_sample_rate, output_channels, ffmpeg_bin)
             _transcode_audio(residual_path, output_sample_rate, output_channels, ffmpeg_bin)
             if is_cancelled_cb and is_cancelled_cb():
-                raise RuntimeError("Cancelled during transcoding")
+                raise JobCancelledError("Cancelled during transcoding")
 
         info = sf.info(target_path)
 

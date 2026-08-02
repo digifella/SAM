@@ -37,6 +37,7 @@ from sam_audio import SAMAudio, SAMAudioProcessor
 from sam_audio.model.model import SeparationResult, DFLT_ODE_OPT
 from sam_audio.processor import Batch
 from sam_audio_local.loader import load_sam_audio_optimized
+from sam_audio_utils.errors import JobCancelledError
 from torchdiffeq import odeint
 
 # Default configuration file
@@ -982,7 +983,7 @@ def process_audio_file(
             )
 
         if is_cancelled_cb and is_cancelled_cb():
-            raise RuntimeError("Cancelled before preprocessing")
+            raise JobCancelledError("Cancelled before preprocessing")
 
         # Convert to mono 16k if requested
         process_path = audio_path
@@ -1030,7 +1031,7 @@ def process_audio_file(
             # Stream chunks one at a time using generator
             for i, (start, end, chunk_data, sr) in enumerate(chunk_audio_generator(process_path, chunk_duration, overlap), 1):
                 if is_cancelled_cb and is_cancelled_cb():
-                    raise RuntimeError("Cancelled during chunk processing")
+                    raise JobCancelledError("Cancelled during chunk processing")
                 ensure_memory_headroom(logger, f"chunk {i} inference", retries=1, wait_seconds=1)
 
                 print(f"  → Processing chunk {i}/{num_chunks} ({start:.1f}s - {end:.1f}s)...", end=" ")
@@ -1101,7 +1102,7 @@ def process_audio_file(
         else:
             # Process entire file
             if is_cancelled_cb and is_cancelled_cb():
-                raise RuntimeError("Cancelled before inference")
+                raise JobCancelledError("Cancelled before inference")
             ensure_memory_headroom(logger, "full-file inference")
             print("[Step 4] Running inference...")
             logger.info("Running inference on entire file...")

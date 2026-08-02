@@ -32,6 +32,8 @@ if __package__ in (None, ""):
 else:
     from .handlers import get_handler
 
+from sam_audio_utils.errors import JobCancelledError  # noqa: F401  (re-exported)
+
 
 def load_env_file(path: Path) -> Dict[str, str]:
     values: Dict[str, str] = {}
@@ -180,10 +182,6 @@ class HeartbeatThread(threading.Thread):
                 self.client.heartbeat(self.job_id)
             except Exception:
                 logging.exception("Heartbeat failed for job %s", self.job_id)
-
-
-class JobCancelledError(RuntimeError):
-    pass
 
 
 def parse_input_data(raw_value) -> dict:
