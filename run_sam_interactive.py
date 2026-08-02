@@ -798,6 +798,8 @@ def process_chunk(
 
     batch = None
     result = None
+    target_tensor = None
+    residual_tensor = None
 
     try:
         # Process chunk
@@ -843,6 +845,10 @@ def process_chunk(
             del batch
         if result is not None:
             del result
+        if target_tensor is not None:
+            del target_tensor
+        if residual_tensor is not None:
+            del residual_tensor
         aggressive_cleanup()
         raise
 
