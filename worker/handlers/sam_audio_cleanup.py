@@ -629,10 +629,6 @@ def handle(
             path.unlink(missing_ok=True)
         if process_input != input_path:
             process_input.unlink(missing_ok=True)
-        archive_path = work_dir / "audio_cleanup_result.zip"
-        if archive_path.exists():
-            # Keep ZIP until worker uploads it.
-            pass
         # The result ZIP stays in work_dir until the caller consumes it.
         # Callers that passed work_dir own its cleanup; legacy callers must
         # remove output_file's parent tree themselves.
