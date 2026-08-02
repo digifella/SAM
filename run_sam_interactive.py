@@ -690,9 +690,11 @@ def convert_to_mono_16k(input_path: Path, ffmpeg_bin: str = "ffmpeg") -> Path:
         return output_path
     except subprocess.CalledProcessError as e:
         print(f"Error converting audio: {e.stderr.decode()}")
+        output_path.unlink(missing_ok=True)
         raise
     except subprocess.TimeoutExpired:
         print("Error: ffmpeg conversion timed out")
+        output_path.unlink(missing_ok=True)
         raise
 
 
