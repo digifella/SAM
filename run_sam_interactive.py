@@ -572,6 +572,7 @@ def extract_audio_to_wav(path: Path, ffmpeg_bin: str = "ffmpeg", out_dir: Option
     When out_dir is None a fresh temp dir is created; the caller owns cleanup
     of the returned file's parent in that case.
     """
+    created_out_dir = out_dir is None
     if out_dir is None:
         out_dir = Path(tempfile.mkdtemp(prefix="sam_video_audio_"))
     out = out_dir / f"{path.stem}.wav"
@@ -582,6 +583,8 @@ def extract_audio_to_wav(path: Path, ffmpeg_bin: str = "ffmpeg", out_dir: Option
     ]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0 or not out.exists():
+        if created_out_dir:
+            shutil.rmtree(out_dir, ignore_errors=True)
         raise RuntimeError(
             f"ffmpeg audio extraction failed for {path.name}: {proc.stderr[-500:]}"
         )
@@ -634,6 +637,7 @@ def auto_input_gain(path: Path, ffmpeg_bin: str = "ffmpeg", out_dir: Optional[Pa
     if gain_db == 0.0:
         return path, 0.0
 
+    created_out_dir = out_dir is None
     if out_dir is None:
         out_dir = Path(tempfile.mkdtemp(prefix="sam_pregain_"))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -641,6 +645,8 @@ def auto_input_gain(path: Path, ffmpeg_bin: str = "ffmpeg", out_dir: Optional[Pa
     cmd = [ffmpeg_bin, "-y", "-i", str(path), "-af", f"volume={gain_db:+.2f}dB", str(out)]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0 or not out.exists():
+        if created_out_dir:
+            shutil.rmtree(out_dir, ignore_errors=True)
         raise RuntimeError(f"ffmpeg pre-gain failed for {path.name}: {proc.stderr[-500:]}")
     return out, gain_db
 
