@@ -213,11 +213,22 @@ def process_job(client: QueueClient, cfg: Config, job: dict) -> None:
     input_data = parse_input_data(job.get("input_data"))
 
     logging.info("Claimed job id=%s type=%s", job_id, job_type)
-    work_dir = Path(tempfile.mkdtemp(prefix=f"queue_job_{job_id}_", dir=str(cfg.temp_dir)))
-    input_path: Optional[Path] = None
+    work_dir: Optional[Path] = None
+    try:
+        work_dir = Path(tempfile.mkdtemp(prefix=f"queue_job_{job_id}_", dir=str(cfg.temp_dir)))
+        hb = HeartbeatThread(client, job_id, cfg.heartbeat_interval)
+        hb.start()
+    except Exception as e:
+        logging.exception("Job id=%s failed to set up work dir/heartbeat", job_id)
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        try:
+            client.fail(job_id, str(e))
+        except Exception:
+            logging.exception("Failed to submit fail status for job id=%s", job_id)
+        return
 
-    hb = HeartbeatThread(client, job_id, cfg.heartbeat_interval)
-    hb.start()
+    input_path: Optional[Path] = None
     preserve_work_dir = False
     try:
         input_filename = str(job.get("input_filename", "") or "")

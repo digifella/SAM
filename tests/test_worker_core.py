@@ -169,6 +169,36 @@ class WorkerCoreTests(unittest.TestCase):
             self.assertIsNotNone(received["work_dir"])
             self.assertTrue(received["work_dir"].exists())
 
+    def test_process_job_mkdtemp_failure_fails_job(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            cfg = w.Config(
+                server_url="https://example.com",
+                secret_key="x",
+                poll_interval=1,
+                worker_id="test",
+                supported_types="sam_audio_cleanup",
+                log_level="INFO",
+                temp_dir=td_path / "tmp",
+                heartbeat_interval=60,
+                request_timeout=10,
+            )
+            cfg.temp_dir.mkdir(parents=True, exist_ok=True)
+
+            client = DummyClient()
+            job = {"id": 13, "type": "sam_audio_cleanup", "input_data": "{}"}
+
+            def fake_handler(input_path, input_data, job, progress_cb=None):
+                raise AssertionError("handler must not run when work dir setup fails")
+
+            with patch.object(w, "get_handler", return_value=fake_handler), \
+                 patch.object(w.tempfile, "mkdtemp", side_effect=PermissionError("no perm")):
+                w.process_job(client, cfg, job)  # must not raise
+
+            self.assertEqual(len(client.failed), 1)
+            self.assertEqual(client.failed[0][0], 13)
+            self.assertEqual(client.completed, [])
+
     def test_process_job_unsupported_type(self):
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
