@@ -39,7 +39,7 @@
 **Interfaces:**
 - Produces: `handle(input_path, input_data, job, progress_cb=None, is_cancelled_cb=None, work_dir: Optional[Path] = None)` — when `work_dir` is given, ALL temp products (including the result ZIP) land under `<work_dir>/sam_handler_<jobid>/` and the caller owns cleanup. When None (legacy), mkdtemp as before and the caller must remove `output_file`'s parent tree. Tasks 6 and 10 rely on the `work_dir` parameter.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_handler_workdir.py`:
 
@@ -95,12 +95,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /home/longboardfella/sam-audio && .venv/bin/python -m pytest tests/test_handler_workdir.py -v`
 Expected: FAIL — `handle() got an unexpected keyword argument 'work_dir'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `worker/handlers/sam_audio_cleanup.py`, change the `handle` signature:
 
@@ -143,12 +143,12 @@ In `worker/worker.py`, after `handler_params = set(...)` (:237-239), add:
 
 In `streamlit_app.py` `worker_run`, add `work_dir=work_dir` to the `handle(...)` call (the `with tempfile.TemporaryDirectory` block already defines `work_dir = Path(td)`).
 
-- [ ] **Step 4: Run the new test and the full suite**
+- [x] **Step 4: Run the new test and the full suite**
 
 Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: new test PASSES; all 42 pre-existing tests still pass.
 
-- [ ] **Step 5: Extend the worker test to cover work_dir passing**
+- [x] **Step 5: Extend the worker test to cover work_dir passing**
 
 In `tests/test_worker_core.py`, add (mirroring `test_process_job_success`'s stub style):
 
@@ -171,11 +171,11 @@ def test_process_job_passes_work_dir(tmp_path):
 
 (Adapt `make_cfg`/`DummyClient` names to what `test_worker_core.py` actually defines — read the file first; it stubs `get_handler` via `patch.object(w, ...)` at :76-77.)
 
-- [ ] **Step 6: Run full suite again — all green**
+- [x] **Step 6: Run full suite again — all green**
 
 Run: `.venv/bin/python -m pytest tests/ -v`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add worker/handlers/sam_audio_cleanup.py worker/worker.py streamlit_app.py tests/test_handler_workdir.py tests/test_worker_core.py
@@ -189,7 +189,7 @@ sam venv pins Streamlit 1.19.0 where `st.experimental_rerun()` works but is depr
 **Files:**
 - Modify: `streamlit_app.py:336-339`
 
-- [ ] **Step 1: Add the shim and use it**
+- [x] **Step 1: Add the shim and use it**
 
 Above `main()` in `streamlit_app.py`:
 
@@ -203,12 +203,12 @@ def _rerun() -> None:
 
 Replace `st.experimental_rerun()` (:339) with `_rerun()`.
 
-- [ ] **Step 2: Smoke test**
+- [x] **Step 2: Smoke test**
 
 Run: `cd /home/longboardfella/sam-audio && .venv/bin/python -c "import ast; ast.parse(open('streamlit_app.py').read())" && .venv/bin/python -m pytest tests/ -q`
 Expected: parses, suite green. (Full UI smoke happens in Task 9.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add streamlit_app.py
@@ -221,15 +221,15 @@ git commit -m "fix: rerun compat shim for streamlit >=1.27 removal of experiment
 - Review scope: `run_sam_interactive.py`, `worker/worker.py`, `sam_audio_local/loader.py`, `worker/handlers/sam_audio_cleanup.py`
 - Fixes + tests: as findings dictate (each its own commit)
 
-- [ ] **Step 1: Dispatch review subagent (model: sonnet)**
+- [x] **Step 1: Dispatch review subagent (model: sonnet)**
 
 Prompt packet: repo `/home/longboardfella/sam-audio`; objective "correctness-only review of the four files above: error paths, cancellation propagation, resource cleanup, fp16/fp32 dtype boundaries, chunk merge/crossfade math, OOM-retry ladder consistency"; out of scope: style, refactors, dependency upgrades; evidence format: file:line, one-sentence defect, concrete failure scenario; stop if a file doesn't match this description.
 
-- [ ] **Step 2: Fable triages findings**
+- [x] **Step 2: Fable triages findings**
 
 Reject speculative/no-failure-scenario findings. For each CONFIRMED finding, verify by reopening the cited lines.
 
-- [ ] **Step 3: For each confirmed finding: failing test (where testable) → fix → suite green → commit**
+- [x] **Step 3: For each confirmed finding: failing test (where testable) → fix → suite green → commit**
 
 One commit per finding: `fix: <finding summary>`. If zero findings survive triage, record "Task 3: no confirmed findings" in the capacity-results doc (Task 5) and move on.
 
@@ -238,12 +238,12 @@ One commit per finding: `fix: <finding summary>`. If zero findings survive triag
 **Files:**
 - Create: `docs/2026-08-01-review-notes.md`
 
-- [ ] **Step 1: Collect versions and known issues**
+- [x] **Step 1: Collect versions and known issues**
 
 Run: `.venv/bin/pip list --outdated --format=columns | head -40`
 Record in `docs/2026-08-01-review-notes.md`: current pins (torch 2.6.0+cu124, streamlit 1.19.0, soundfile 0.13.1, numpy 1.26.4, requests 2.32.5), what's outdated, and the decision: **no torch/streamlit upgrades** (working fp16 build; Turing support in newer torch wheels must be re-verified before any future bump). Note any security-relevant advisories seen for requests/streamlit versions.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/2026-08-01-review-notes.md
@@ -260,7 +260,7 @@ git commit -m "docs: dependency currency review notes (hold torch/streamlit pins
 - Create: `docs/2026-08-01-capacity-soak-results.md`
 - Scratch: `$SCRATCH/soak_45min.wav`, `$SCRATCH/soak_monitor.csv`, `$SCRATCH/soak_work/` (all reboot-disposable)
 
-- [ ] **Step 1: Build the 45-min test file** (Apollo13.wav is 57.6s of noisy radio voice — ideal content)
+- [x] **Step 1: Build the 45-min test file** (Apollo13.wav is 57.6s of noisy radio voice — ideal content)
 
 ```bash
 SCRATCH=/tmp/claude-1000/-home-longboardfella-sam-audio/456cf002-c7df-49ad-9c48-620a8286549b/scratchpad
@@ -270,14 +270,14 @@ ffprobe -v error -show_entries format=duration -of csv=p=0 "$SCRATCH/soak_45min.
 ```
 Expected duration: ~2708s (~45.1 min).
 
-- [ ] **Step 2: Start the resource monitor**
+- [x] **Step 2: Start the resource monitor**
 
 ```bash
 ( while true; do echo "$(date +%s),$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits),$(free -m | awk '/Mem:/{print $3}')" >> "$SCRATCH/soak_monitor.csv"; sleep 10; done ) &
 echo $! > "$SCRATCH/soak_mon.pid"
 ```
 
-- [ ] **Step 3: Run the soak** (direct `handle()` call; CLI doesn't exist yet)
+- [x] **Step 3: Run the soak** (direct `handle()` call; CLI doesn't exist yet)
 
 ```bash
 cd /home/longboardfella/sam-audio && .venv/bin/python - <<'EOF'
@@ -305,7 +305,7 @@ EOF
 
 Run this in the background (`run_in_background`) — it will take tens of minutes. Poll progress from its output.
 
-- [ ] **Step 4: Stop monitor, evaluate against gate criteria**
+- [x] **Step 4: Stop monitor, evaluate against gate criteria**
 
 ```bash
 kill "$(cat "$SCRATCH/soak_mon.pid")"
@@ -315,7 +315,7 @@ sort -t, -k3 -n "$SCRATCH/soak_monitor.csv" | tail -1   # peak RAM row
 
 **Gate (all must hold):** job completes; `options_applied.auto_profile == "requested"` (OOM ladder never engaged); peak VRAM < 44000 MiB total (leaving headroom vs 46080); peak used RAM < 20000 MiB; memory flat across chunks (no monotonic climb in the CSV middle section).
 
-- [ ] **Step 5: Record results and commit**
+- [x] **Step 5: Record results and commit**
 
 Write `docs/2026-08-01-capacity-soak-results.md`: runtime, realtime factor, peak VRAM/RAM, auto_profile, chunk count, and Task 3 outcome note. Commit:
 
