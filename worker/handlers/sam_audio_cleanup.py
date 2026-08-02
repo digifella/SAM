@@ -291,29 +291,47 @@ def _is_cuda_oom(exc: Exception) -> bool:
     return "out of memory" in text and ("cuda" in text or "cublas" in text or "cudnn" in text)
 
 
+_SIZE_UNIT_BYTES = {"kib": 1024.0, "mib": 1024.0**2, "gib": 1024.0**3}
+
+
+def _size_to_bytes(value: str, unit: str) -> float:
+    return float(value) * _SIZE_UNIT_BYTES[unit.lower()]
+
+
 def _is_cap_limited_cuda_oom(exc: Exception) -> bool:
     """
-    Detect OOM where PyTorch per-process cap is the bottleneck:
-    - "... Tried to allocate X MiB ..."
-    - "... Y GiB allowed; Of the allocated memory Z GiB is allocated ..."
+    Detect a CUDA OOM caused by our own artificially low per-process memory
+    fraction cap, as opposed to genuine GPU exhaustion.
+
+    torch 2.6's CUDA OOM message always contains "Tried to allocate X <unit>"
+    and "... of which Y <unit> is free." (confirmed against the pinned
+    torch==2.6.0+cu124 build). If the device reports a free amount that
+    comfortably covers the requested allocation and the allocation still
+    failed, the failure can only be explained by our own memory_fraction
+    cap -- genuine exhaustion instead reports little free memory. This is a
+    relative comparison between two numbers parsed from the same message, so
+    it holds regardless of the card's absolute size or how much of it other
+    processes happen to be using.
     """
     text = str(exc)
     if not _is_cuda_oom(exc):
         return False
 
-    alloc_match = re.search(r"Tried to allocate\s+([0-9]+(?:\.[0-9]+)?)\s+MiB", text)
-    allowed_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s+GiB allowed", text)
-    used_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s+GiB is allocated by PyTorch", text)
-    if not alloc_match or not allowed_match or not used_match:
+    size_re = r"([0-9]+(?:\.[0-9]+)?)\s*(GiB|MiB|KiB)"
+    alloc_match = re.search(r"Tried to allocate\s+" + size_re, text)
+    free_match = re.search(r"of which\s+" + size_re + r"\s+is free", text)
+    if not alloc_match or not free_match:
         return False
 
-    requested_gib = float(alloc_match.group(1)) / 1024.0
-    allowed_gib = float(allowed_match.group(1))
-    allocated_gib = float(used_match.group(1))
-    cap_headroom_gib = max(0.0, allowed_gib - allocated_gib)
+    try:
+        requested_bytes = _size_to_bytes(*alloc_match.groups())
+        free_bytes = _size_to_bytes(*free_match.groups())
+    except (KeyError, ValueError):
+        return False
 
-    # Leave a small safety buffer; if this fails, retries should lift the cap.
-    return cap_headroom_gib + 0.10 < requested_gib
+    # Small safety buffer so borderline cases don't misclassify.
+    safety_margin_bytes = 100.0 * 1024.0**2
+    return free_bytes > requested_bytes + safety_margin_bytes
 
 
 def handle(
