@@ -150,15 +150,36 @@ Suite grew 42 → 69 tests across the plan; full suite green at time of writing
   process start, and its gate requires the OOM ladder never engage). The RAM figure was
   re-measured alone; VRAM and timing were not, but both passed with wide margins.
 
-## Separate observation — short files take a different path (NOT investigated)
+## Short files and the non-chunked path — investigated 2026-08-03, NOT a defect
 
-Pre-existing, not caused by any change in this plan, and explicitly out of Task 3/5 scope.
+**This section previously reported a defect. That report was wrong and is retracted.**
 
-The `ram_probe` run took the **non-chunked** path (57.64s < 60s `chunk_duration` →
-"Processing entire file") and produced a **near-silent target: -70.9 dBFS RMS**, with the
-residual at -17.1 dBFS — i.e. SAM extracted essentially nothing. The *same audio* and the
-*same description* work correctly via the chunked path (this soak).
+The original claim: the `ram_probe` run took the non-chunked path (57.64s < 60s
+`chunk_duration` → "Processing entire file") and produced a near-silent target at
+**-70.9 dBFS** RMS, implying SAM extracted nothing on short files — which would have
+affected Task 6 (`clean_cli`) and Task 10 (the Cortex page), since both routinely send
+sub-60s files down that path.
 
-**Relevant to later tasks:** Task 6 (`clean_cli`) and Task 10 (the Cortex page) will routinely
-send short files (<60s) down this same non-chunked path. Flagged for the user; needs its own
-investigation before those tasks ship a short-file workflow.
+**A controlled experiment on 2026-08-03 does not reproduce it.** Same file
+(`Apollo13.wav`, 57.64s), same description, same `convert_to_mono`/`overlap`; the *only*
+variable was `chunk_duration`, chosen to force each branch:
+
+| Condition | `chunk_duration` | Branch taken (from log) | Target RMS | Residual RMS | Elapsed |
+|---|---|---|---|---|---|
+| A | 60 | `Processing entire file (no chunking needed)` | **-18.1 dBFS** | -23.9 dBFS | 117.4s |
+| B | 30 | `Using chunking (chunk size: 30.0s, overlap: 2.0s)`, 3 chunks | **-17.8 dBFS** | -21.2 dBFS | 25.5s |
+
+Both outputs are healthy and within 0.3 dB of each other, against an input at -20.7 dBFS.
+The non-chunked path separates correctly. The final 1.6s chunk in condition B (56.0–57.6s)
+also processed cleanly, so short trailing chunks are fine too.
+
+**Conclusion: there is no short-file defect, and no chunking-fallback is needed.** The
+-70.9 dBFS figure came from `ram_probe.py`, a throwaway script written for the RAM
+measurement and since lost with `/tmp`. Its parameters could not be recovered, so the
+confounding variable cannot be named with certainty — but it was *not* the chunked/
+non-chunked distinction, which is the only thing the original claim attributed it to.
+
+**Lesson:** the probe was built to measure RAM, and its audio output was judged
+opportunistically as a side observation. A measurement rig is not a correctness rig —
+a side observation from one should be reproduced under control before it is recorded
+as a defect.
