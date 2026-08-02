@@ -321,6 +321,7 @@ def handle(
     job: dict,
     progress_cb: Optional[Callable[[float, str, Optional[str]], None]] = None,
     is_cancelled_cb: Optional[Callable[[], bool]] = None,
+    work_dir: Optional[Path] = None,
 ) -> dict:
     if not input_path or not input_path.exists():
         raise ValueError("sam_audio_cleanup requires an input audio file")
@@ -361,7 +362,12 @@ def handle(
 
     _safe_progress(progress_cb, 5, "Preparing audio job", "prepare")
 
-    work_dir = Path(tempfile.mkdtemp(prefix=f"sam_audio_job_{job.get('id', 'x')}_"))
+    if work_dir is not None:
+        work_dir = Path(work_dir) / f"sam_handler_{job.get('id', 'x')}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # Legacy path: caller must remove output_file's parent tree after use.
+        work_dir = Path(tempfile.mkdtemp(prefix=f"sam_audio_job_{job.get('id', 'x')}_"))
     output_dir = work_dir / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -627,4 +633,6 @@ def handle(
         if archive_path.exists():
             # Keep ZIP until worker uploads it.
             pass
-        # temp directory cleanup is handled by worker.py after upload
+        # The result ZIP stays in work_dir until the caller consumes it.
+        # Callers that passed work_dir own its cleanup; legacy callers must
+        # remove output_file's parent tree themselves.

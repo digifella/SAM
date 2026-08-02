@@ -114,6 +114,7 @@ def worker_run(upload_name: str, upload_bytes: bytes, payload: dict, events: que
                 job={"id": 0, "type": "sam_audio_cleanup", "input_filename": upload_name},
                 progress_cb=progress_cb,
                 is_cancelled_cb=lambda: cancel_event.is_set(),
+                work_dir=work_dir,
             )
 
             output_data = result.get("output_data", {}) if isinstance(result, dict) else {}

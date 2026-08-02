@@ -237,6 +237,8 @@ def process_job(client: QueueClient, cfg: Config, job: dict) -> None:
         handler_params = set(inspect.signature(handler).parameters.keys())
         if "progress_cb" in handler_params:
             handler_kwargs["progress_cb"] = _progress_cb
+        if "work_dir" in handler_params:
+            handler_kwargs["work_dir"] = work_dir
 
         result = handler(**handler_kwargs)
         output_data = result.get("output_data", {}) if isinstance(result, dict) else {}

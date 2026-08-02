@@ -83,6 +83,43 @@ class WorkerCoreTests(unittest.TestCase):
             self.assertTrue(output_data["ok"])
             self.assertEqual(returned_file, output_file)
 
+    def test_process_job_passes_work_dir(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            received = {}
+
+            def fake_handler(input_path, input_data, job, progress_cb=None, work_dir=None):
+                received["work_dir"] = work_dir
+                return {"output_data": {"ok": True}, "output_file": None}
+
+            cfg = w.Config(
+                server_url="https://example.com",
+                secret_key="x",
+                poll_interval=1,
+                worker_id="test",
+                supported_types="sam_audio_cleanup",
+                log_level="INFO",
+                temp_dir=td_path / "tmp",
+                heartbeat_interval=60,
+                request_timeout=10,
+            )
+            cfg.temp_dir.mkdir(parents=True, exist_ok=True)
+
+            client = DummyClient()
+            job = {
+                "id": 7,
+                "type": "sam_audio_cleanup",
+                "input_filename": "",
+                "input_data": "{}",
+            }
+
+            with patch.object(w, "get_handler", return_value=fake_handler):
+                w.process_job(client, cfg, job)
+
+            self.assertEqual(len(client.failed), 0)
+            self.assertIsNotNone(received["work_dir"])
+            self.assertTrue(str(received["work_dir"]).startswith(str(cfg.temp_dir)))
+
     def test_process_job_unsupported_type(self):
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
