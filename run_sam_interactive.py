@@ -720,14 +720,28 @@ def get_audio_duration(audio_path: Path) -> float:
 # hair below total_duration, leaving a handful-of-samples remainder -- can
 # therefore crash with "Padding size should be less than the corresponding
 # input dimension" (measured: a 6-sample chunk against a 1914-sample pad).
-# The analytic worst case is ~1919 samples (~40ms @ 48kHz). 1.6s is the
-# smallest final-chunk duration directly measured to decode cleanly (the
-# validated chunk_duration=30 profile on Apollo13.wav, 57.64s, whose final
-# chunk is 1.64s) -- comfortably (>35x) above the analytic floor while
-# staying at the smallest value with direct evidence behind it. A final
-# chunk shorter than this is folded into the preceding chunk instead of
-# being emitted alone (dropping it silently is not acceptable).
-MIN_CHUNK_SECONDS = 1.6
+# The analytic requirement this guards is hop_length - 1 = 1919 samples,
+# i.e. ~40ms @ 48kHz -- the brief's own diagnosis is that a genuinely short
+# final chunk is fine (1.6s worked) and the failure is specifically
+# *sub-second* remainders. 0.5s is ~12.5x that analytic worst case: a sane
+# safety factor derived from the codec's own pad-width requirement, not
+# from what happens to leave one test fixture undisturbed (an earlier,
+# larger 1.6s floor was rejected on review -- it widened the collapse band
+# in _chunk_boundaries below and could inflate chunks on the OOM-recovery
+# retry profiles in worker/handlers/sam_audio_cleanup.py well past what
+# their smaller chunk_duration was chosen for). GPU-validated 2026-08-03:
+# T=15.5s/cd=5/ov=2 emits a chunk of exactly this floor length (6 chunks,
+# shortest 0.50s) and decodes cleanly at -16.0 and -15.6 dBFS across two
+# runs; both real OOM-recovery profiles (20.3s/cd=20/ov=1.0 and
+# 12.5s/cd=12/ov=0.5), which previously collapsed to a single whole-file
+# chunk, now yield 2 chunks and healthy audio. 10/10 runs healthy, 0 silent,
+# 0 crashed -- see task-9b-report.md "Fix round 1". A final chunk shorter
+# than this is folded into the
+# preceding chunk instead of being emitted alone (dropping it silently is
+# not acceptable) -- see _chunk_boundaries for the fold logic, including the
+# collapse guard that stops a fold from ever reducing a long-enough file to
+# a single whole-file chunk (which would silently resurrect Defect A).
+MIN_CHUNK_SECONDS = 0.5
 
 # Defect-A short-file threshold (Task 9b): files shorter than chunk_duration
 # used to take the non-chunked path unconditionally, and that path is
@@ -787,6 +801,23 @@ def _chunk_boundaries(total_duration: float, chunk_duration: float, overlap: flo
     Folds a final remainder shorter than MIN_CHUNK_SECONDS into the
     preceding chunk (extending its end to total_duration) rather than
     emitting it standalone or dropping it.
+
+    Guard against collapsing to a single whole-file chunk: if only two
+    boundaries remain and folding the short one would leave just one, that
+    single chunk would go through the same unreliable single-shot
+    inference as the pre-Task-9b non-chunked path (Defect A) -- reachable
+    today from process_audio_file's own long-file branch whenever a
+    caller's chunk_duration/overlap happen to leave a short remainder
+    (e.g. the OOM-recovery retry profiles in
+    worker/handlers/sam_audio_cleanup.py, which deliberately shrink
+    chunk_duration to reduce memory use; collapsing to one chunk there
+    would make the "safer" retry use *more* peak memory than the attempt
+    that just failed). If the file is long enough to hold two
+    MIN_CHUNK_SECONDS-or-longer chunks, re-split it evenly instead of
+    collapsing -- mirroring the halving strategy _decide_chunking already
+    uses to force short files into >=2 chunks. Only genuinely-too-short
+    files (total_duration < 2 * MIN_CHUNK_SECONDS) fall through to a
+    single chunk.
     """
     if chunk_duration <= 0:
         raise ValueError("chunk_duration must be > 0 for chunked processing")
@@ -804,6 +835,11 @@ def _chunk_boundaries(total_duration: float, chunk_duration: float, overlap: flo
         start += step
 
     while len(boundaries) > 1 and (boundaries[-1][1] - boundaries[-1][0]) < MIN_CHUNK_SECONDS:
+        if len(boundaries) == 2 and total_duration >= 2 * MIN_CHUNK_SECONDS:
+            half = total_duration / 2.0
+            half_overlap = min(overlap, half / 2.0)
+            boundaries = [[0.0, half], [half - half_overlap, total_duration]]
+            break
         _, last_end = boundaries.pop()
         boundaries[-1][1] = last_end
 
