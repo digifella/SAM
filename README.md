@@ -145,6 +145,51 @@ separation itself fails.
 `--opus`, `target.ogg` (mono Opus) is written alongside `status.json` and
 `result.zip` in `--out-dir`.
 
+## Cortex Suite page
+
+`cortex_suite/pages/21_Audio_Cleanup.py` (Cortex v6.7.0) exposes this pipeline in
+the Cortex Suite UI. It spawns `clean_cli.py` in **this** project's venv as a
+subprocess, so no torch or SAM dependency enters the cortex venv. Progress arrives
+as JSON lines on the subprocess stdout; the result downloads as a ZIP and both
+stems play inline.
+
+`SAM_AUDIO_ROOT` overrides this repo's location (default `/home/longboardfella/sam-audio`);
+the page shows a clear error if that venv is missing rather than failing at spawn.
+
+## Discord loop (Hermes)
+
+Paul attaches a wav/mp3 in Discord and asks Hermes to clean it up. **Discord is only
+the transport** — this is not for cleaning Discord's own voice messages.
+
+```
+Discord attachment
+   -> Hermes on sp4 runs  ~/.local/bin/kb-audio-clean <file> "<sound to KEEP>"
+   -> POST /audio-clean on the fastfella bridge (100.118.92.17:7333, bearer token)
+   -> bridge spools the upload and spawns clean_cli.py DETACHED, returns a job id
+   -> clean_cli separates on the GPU, encodes Opus, and POSTs the result
+      to the channel webhook itself
+```
+
+The bridge never blocks on the job; the caller may poll `GET /audio-status?id=<job_id>`.
+
+- **Spool:** `~/sam-audio/spool/<job_id>/` — `input.<ext>`, `job.json`, `job.log`,
+  `status.json`, `result.zip`, `target.ogg`. Purged after 7 days at bridge start.
+- **Webhook:** `~/.discord-audio-webhook` (chmod 600), read at spawn and passed as
+  `DISCORD_WEBHOOK_URL`. Never on argv, so it stays out of `/proc/*/cmdline`.
+- **Bridge endpoints** are documented in
+  `nemoclaw_ops/docs/2026-08-03-kb-bridge-audio-clean-endpoints.md`. The bridge
+  script itself is not in git; a backup lives at `~/kb-query-server.py.bak-20260803`.
+
+**The description is what to EXTRACT, not what to remove.** SAM pulls the described
+sound into `target.wav` and everything else into `residual.wav`, so "remove the
+background noise" must become `"a person speaking"`. Passing `"background noise"`
+returns the noise. The Hermes prompt registration encodes this translation and
+defaults to `"a person speaking"`.
+
+Discord's attachment cap (25MB for non-Nitro) bounds the input: roughly 2 minutes of
+48kHz mono WAV, or ~25 minutes of 128kbps MP3. Results come back as Opus with a
+bitrate ladder to stay under the same cap.
+
 ## Colab Smoke Test (No Streamlit)
 
 To test the same processing pipeline on Google Colab (single file, conservative memory settings), use:
@@ -174,11 +219,27 @@ Settings are saved to `~/.sam_audio_config.json` for future runs.
 
 ### Chunking
 
-For audio files longer than the chunk duration (default 30s):
-- Files are split into overlapping chunks
+Files are split into overlapping chunks:
 - Each chunk is processed independently using streaming (one at a time)
 - Results are merged with crossfade at overlap regions
 - Memory usage stays constant regardless of file length
+
+**Short files are chunked too, deliberately.** A file shorter than
+`chunk_duration` used to take a single whole-file inference path, and that path
+is unreliable — measured silent (target below -70 dBFS) in **4 of 6 runs**, while
+the chunked path was healthy in 4 of 4. Files at or under `chunk_duration` now
+force chunking by roughly halving the effective chunk size
+(`FORCE_CHUNK_MIN_SECONDS = 3.0`, so inputs under ~6s still fall back rather than
+minting an unusably small chunk). Long-file behaviour is unchanged — the
+validated 45-minute soak profile produces byte-identical boundaries.
+
+A trailing chunk shorter than `MIN_CHUNK_SECONDS` (0.5s) is folded into the
+previous chunk rather than emitted: the codec's reflect-pad requires input longer
+than `hop_length - 1` (1919 samples, ~40ms), and a sub-second remainder crashed
+with *"Padding size should be less than the corresponding input dimension"*. The
+fold never collapses a file to a single chunk — if that would happen, the file is
+re-split evenly instead, since one whole-file chunk is exactly the unreliable
+path above.
 
 ### Memory Management
 

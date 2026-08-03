@@ -324,7 +324,7 @@ git add docs/2026-08-01-capacity-soak-results.md
 git commit -m "docs: 45-min capacity soak results (RTX 8000, gate passed)"
 ```
 
-- [ ] **Step 6: USER CHECK (Paul):** listen to `soak_work/.../target.wav` start/middle/end — voice clean, background in residual. Copy the target somewhere persistent first if a reboot is imminent: `cp <zip> ~/sam-audio/audio_output/soak_result.zip` (audio_output/ is gitignored).
+- [x] **Step 6: USER CHECK (Paul):** listen to `soak_work/.../target.wav` start/middle/end — voice clean, background in residual. Copy the target somewhere persistent first if a reboot is imminent: `cp <zip> ~/sam-audio/audio_output/soak_result.zip` (audio_output/ is gitignored).
 
 ---
 
@@ -345,7 +345,7 @@ git commit -m "docs: 45-min capacity soak results (RTX 8000, gate passed)"
   - `<out-dir>/result.zip` (target.wav, residual.wav, metadata.json), `<out-dir>/target.ogg` when `--opus`
   - Exit code 0 success / 1 failure. Webhook URL only via env `DISCORD_WEBHOOK_URL`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create `tests/test_clean_cli.py`:
 
@@ -416,12 +416,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run tests — verify import failure**
+- [x] **Step 2: Run tests — verify import failure**
 
 Run: `.venv/bin/python -m pytest tests/test_clean_cli.py -v`
 Expected: FAIL — `ModuleNotFoundError: clean_cli`
 
-- [ ] **Step 3: Implement `clean_cli.py`**
+- [x] **Step 3: Implement `clean_cli.py`**
 
 ```python
 #!/usr/bin/env python3
@@ -614,12 +614,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `.venv/bin/python -m pytest tests/test_clean_cli.py -v`
 Expected: PASS (note: importing `clean_cli` imports the handler module → torch; first run takes a few seconds).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add clean_cli.py tests/test_clean_cli.py
@@ -631,7 +631,7 @@ git commit -m "feat: clean_cli.py — shared CLI over sam_audio_cleanup with sta
 **Files:**
 - Test: `tests/test_clean_cli.py` (extend)
 
-- [ ] **Step 1: Add tests**
+- [x] **Step 1: Add tests**
 
 ```python
 import io
@@ -667,9 +667,9 @@ class WebhookTests(unittest.TestCase):
         self.assertFalse(ok)
 ```
 
-- [ ] **Step 2: Run** `.venv/bin/python -m pytest tests/test_clean_cli.py -v` — all PASS.
+- [x] **Step 2: Run** `.venv/bin/python -m pytest tests/test_clean_cli.py -v` — all PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_clean_cli.py
@@ -681,7 +681,7 @@ git commit -m "test: opus encode + discord webhook units for clean_cli"
 **Files:**
 - Test: `tests/test_clean_cli.py` (extend)
 
-- [ ] **Step 1: Add test** (flock is per open-file-description, so a second `open()` in the same process contends):
+- [x] **Step 1: Add test** (flock is per open-file-description, so a second `open()` in the same process contends):
 
 ```python
 import fcntl
@@ -701,9 +701,9 @@ class GpuLockTests(unittest.TestCase):
         fh3.close()
 ```
 
-- [ ] **Step 2: Run** the file's tests — PASS. Run full suite: `.venv/bin/python -m pytest tests/ -q` — green.
+- [x] **Step 2: Run** the file's tests — PASS. Run full suite: `.venv/bin/python -m pytest tests/ -q` — green.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_clean_cli.py
@@ -712,7 +712,7 @@ git commit -m "test: gpu flock serialization for clean_cli"
 
 ### Task 9: CLI real-pipeline smoke (GPU)
 
-- [ ] **Step 1: Run a real 60s job through the CLI**
+- [x] **Step 1: Run a real 60s job through the CLI**
 
 ```bash
 SCRATCH=/tmp/claude-1000/-home-longboardfella-sam-audio/456cf002-c7df-49ad-9c48-620a8286549b/scratchpad
@@ -725,11 +725,11 @@ echo "rc=$?"
 
 Expected: progress JSON lines; rc=0; `out/status.json` state=done; `out/result.zip` and `out/target.ogg` exist; `ffprobe out/target.ogg` shows opus mono.
 
-- [ ] **Step 2: Streamlit harness smoke** (verifies Task 1+2 changes in the UI path)
+- [x] **Step 2: Streamlit harness smoke** (verifies Task 1+2 changes in the UI path)
 
 Run `streamlit run streamlit_app.py`, process Apollo13.wav with trial_seconds=30, confirm completion and that no new `sam_audio_job_*` dirs appear in `/tmp` afterwards: `ls -d /tmp/sam_audio_job_* 2>/dev/null` → empty.
 
-- [ ] **Step 3: Update README and commit**
+- [x] **Step 3: Update README and commit**
 
 Add a "clean_cli.py" section to `README.md` (invocation, JSON-line protocol, status.json states, --opus, --notify-discord + `DISCORD_WEBHOOK_URL`).
 
@@ -751,7 +751,7 @@ git commit -m "docs: clean_cli usage"
 **Interfaces:**
 - Consumes: `clean_cli.py` invocation + JSON-line protocol + `status.json`/`result.zip` from Task 6. `SAM_AUDIO_ROOT` env override, default `/home/longboardfella/sam-audio`.
 
-- [ ] **Step 1: Write the page**
+- [x] **Step 1: Write the page**
 
 ```python
 """Audio Cleanup — SAM-Audio voice separation via the sam-audio project.
@@ -953,12 +953,12 @@ def main():
 main()
 ```
 
-- [ ] **Step 2: Syntax check + manual smoke**
+- [x] **Step 2: Syntax check + manual smoke**
 
 Run: `cd /home/longboardfella/cortex_suite && venv/bin/python -c "import ast; ast.parse(open('pages/21_Audio_Cleanup.py').read())"`
 Then `venv/bin/streamlit run Cortex_Suite.py`, open the Audio Cleanup page, run Apollo13.wav with trial_seconds=30. Expected: progress bar advances, players render, ZIP downloads.
 
-- [ ] **Step 3: Cortex version workflow** (per cortex CLAUDE.md — read `cortex_engine/version_config.py` first, apply a minor feature bump):
+- [x] **Step 3: Cortex version workflow** (per cortex CLAUDE.md — read `cortex_engine/version_config.py` first, apply a minor feature bump):
 
 ```bash
 cd /home/longboardfella/cortex_suite
@@ -968,7 +968,7 @@ venv/bin/python scripts/version_manager.py --update-changelog
 venv/bin/python scripts/version_manager.py --check
 ```
 
-- [ ] **Step 4: Commit (cortex repo)**
+- [x] **Step 4: Commit (cortex repo)**
 
 Review `git status` / `git diff --stat` first — the cortex working tree carries unrelated dirt; stage ONLY the page, version_config.py, CHANGELOG.md, and files version-sync actually touched for this change.
 
@@ -991,13 +991,13 @@ git commit -m "feat: Audio Cleanup page — SAM-Audio voice separation via sam-a
 - Consumes: CLI invocation contract from Task 6 (spawn via env `KB_AUDIO_CLEAN_CLI`, default `/home/longboardfella/sam-audio/.venv/bin/python /home/longboardfella/sam-audio/clean_cli.py`).
 - Produces (relied on by Task 13): `POST /audio-clean?filename=<urlenc>&description=<urlenc>&loudness=1` with raw binary body → `{"ok":true,"job_id":"<id>"}`; `GET /audio-status?id=<job_id>` → status.json content (+ `"state":"stale"` if pid dead, `"state":"submitted"` if no status yet, `"ok":false,"error":"unknown job"` otherwise). Spool: `~/sam-audio/spool/<job_id>/`.
 
-- [ ] **Step 1: Backup the live script**
+- [x] **Step 1: Backup the live script**
 
 ```bash
 cp /home/longboardfella/kb-query-server.py /home/longboardfella/kb-query-server.py.bak-20260801
 ```
 
-- [ ] **Step 2: Add constants + helpers** (near the existing `TOKEN`/`BIND`/`PORT` block, kb-query-server.py:39-43; `import secrets, shutil, subprocess` and `from pathlib import Path` at the top if absent):
+- [x] **Step 2: Add constants + helpers** (near the existing `TOKEN`/`BIND`/`PORT` block, kb-query-server.py:39-43; `import secrets, shutil, subprocess` and `from pathlib import Path` at the top if absent):
 
 ```python
 SPOOL_DIR = Path(os.path.expanduser("~/sam-audio/spool"))
@@ -1069,7 +1069,7 @@ def audio_clean_status(job_id: str) -> dict:
     return {"ok": True, "job_id": job_id, **status}
 ```
 
-- [ ] **Step 3: Add a streamed raw-body reader to `Handler`** (next to `_read_json`, :2001):
+- [x] **Step 3: Add a streamed raw-body reader to `Handler`** (next to `_read_json`, :2001):
 
 ```python
     def _read_body_to_file(self, dest, max_bytes: int) -> int:
@@ -1089,7 +1089,7 @@ def audio_clean_status(job_id: str) -> dict:
         return n
 ```
 
-- [ ] **Step 4: Add dispatch branches in `_handle()`** (alongside the existing `/add` branch, following its style):
+- [x] **Step 4: Add dispatch branches in `_handle()`** (alongside the existing `/add` branch, following its style):
 
 ```python
         if parsed.path.rstrip("/") == "/audio-clean" and self.command == "POST":
@@ -1125,7 +1125,7 @@ def audio_clean_status(job_id: str) -> dict:
 
 Note: job_id regex must accept the `YYYYMMDD-HHMMSS-hex` form (digits included) — `[0-9a-f\-]` does. Also add `_purge_spool()` in `__main__` before `serve_forever()`.
 
-- [ ] **Step 5: Integration test on a private port with a stub CLI**
+- [x] **Step 5: Integration test on a private port with a stub CLI**
 
 Create `$SCRATCH/stub_clean_cli.sh`:
 
@@ -1166,7 +1166,7 @@ pkill -f "KB_QUERY_PORT=7999" || kill %1
 
 (Adjust the final kill to target the test server's pid — capture `$!` at launch.)
 
-- [ ] **Step 6: Restart the LIVE bridge and verify it still serves**
+- [x] **Step 6: Restart the LIVE bridge and verify it still serves**
 
 ```bash
 pkill -f kb-query-server.py; sleep 2
@@ -1180,27 +1180,27 @@ tail -5 /tmp/kb-query-server.log
 
 Expected: server listening, existing endpoints unaffected (spot-check one: an authed GET that previously worked, e.g. `/graph` per its contract).
 
-- [ ] **Step 7: Record the change** — append a dated section to `/home/longboardfella/nemoclaw_ops/docs/` (new file `2026-08-01-kb-bridge-audio-clean-endpoints.md`) describing the two endpoints, spool layout, env knobs (`KB_AUDIO_CLEAN_CLI`, `~/.discord-audio-webhook`), and the `.bak-20260801` backup. Commit in nemoclaw_ops if it's a git repo (check `git -C ~/nemoclaw_ops status`), else leave the file.
+- [x] **Step 7: Record the change** — append a dated section to `/home/longboardfella/nemoclaw_ops/docs/` (new file `2026-08-01-kb-bridge-audio-clean-endpoints.md`) describing the two endpoints, spool layout, env knobs (`KB_AUDIO_CLEAN_CLI`, `~/.discord-audio-webhook`), and the `.bak-20260801` backup. Commit in nemoclaw_ops if it's a git repo (check `git -C ~/nemoclaw_ops status`), else leave the file.
 
 ### Task 12: Discord webhook config + real short job via bridge
 
-- [ ] **Step 1: USER STEP (Paul):** create a webhook in the target Discord channel (Channel settings → Integrations → Webhooks → New Webhook → Copy URL) and provide the URL.
+- [x] **Step 1: USER STEP (Paul):** create a webhook in the target Discord channel (Channel settings → Integrations → Webhooks → New Webhook → Copy URL) and provide the URL.
 
-- [ ] **Step 2: Store it**
+- [x] **Step 2: Store it**
 
 ```bash
 printf '%s' '<WEBHOOK_URL>' > ~/.discord-audio-webhook
 chmod 600 ~/.discord-audio-webhook
 ```
 
-- [ ] **Step 3: Webhook sanity test** (no GPU):
+- [x] **Step 3: Webhook sanity test** (no GPU):
 
 ```bash
 curl -sS -F 'content=SAM-Audio webhook test' "$(cat ~/.discord-audio-webhook)"
 ```
 Expected: message appears in the channel.
 
-- [ ] **Step 4: Real end-to-end short job through the live bridge**
+- [x] **Step 4: Real end-to-end short job through the live bridge**
 
 ```bash
 TOKEN=$(cat ~/.kb-query-token)
@@ -1220,7 +1220,7 @@ Poll `/audio-status?id=...` until `done`. Expected: `target.ogg` posted to the D
 - Create on sp4: `/home/paul/.local/bin/kb-audio-clean`
 - Modify on sp4: Hermes tool/prompt registration (location discovered in Step 1)
 
-- [ ] **Step 1: Inspect sp4 conventions** (read-only):
+- [x] **Step 1: Inspect sp4 conventions** (read-only):
 
 ```bash
 ssh sp4 -o RemoteCommand=none 'ls ~/.local/bin/kb-* && cat ~/.local/bin/kb-ask 2>/dev/null || cat $(ls ~/.local/bin/kb-* | head -1)'
@@ -1228,7 +1228,7 @@ ssh sp4 -o RemoteCommand=none 'grep -rn "kb-" ~/.hermes/config.yaml | head; ls ~
 ```
 Learn: where the bearer token lives on sp4, how existing wrappers call the bridge, and how tools are exposed to Hermes (config.yaml tools list vs. prompt snippet).
 
-- [ ] **Step 2: Install the wrapper** (align the TOKEN line with the discovered convention before installing):
+- [x] **Step 2: Install the wrapper** (align the TOKEN line with the discovered convention before installing):
 
 ```bash
 #!/usr/bin/env bash
@@ -1252,14 +1252,14 @@ echo "Submitted. Cleaned audio will be posted to this Discord channel when proce
 
 Deploy: write locally, `scp` to `sp4:/home/paul/.local/bin/kb-audio-clean`, `ssh sp4 -o RemoteCommand=none 'chmod +x ~/.local/bin/kb-audio-clean'`.
 
-- [ ] **Step 3: Test from sp4 shell**
+- [x] **Step 3: Test from sp4 shell**
 
 ```bash
 ssh sp4 -o RemoteCommand=none '~/.local/bin/kb-audio-clean <some-small-audio-file-on-sp4> "a man speaking"'
 ```
 Expected: `{"ok":true,"job_id":...}` and, minutes later, the cleaned Opus in Discord.
 
-- [ ] **Step 4: Register with Hermes** — following whatever pattern Step 1 revealed (tools list in `~/.hermes/config.yaml` and/or the prompt snippet used for kb-ask): add `kb-audio-clean` with usage guidance:
+- [x] **Step 4: Register with Hermes** — following whatever pattern Step 1 revealed (tools list in `~/.hermes/config.yaml` and/or the prompt snippet used for kb-ask): add `kb-audio-clean` with usage guidance:
 
 > When the user posts an audio/voice attachment and asks for cleanup/denoising, run `kb-audio-clean <attachment-path> <description of the sound to KEEP, e.g. "a man speaking">` and tell the user the job is submitted and the cleaned audio will be posted to the channel automatically. Do not wait for completion.
 
@@ -1273,13 +1273,13 @@ Restart/reload Hermes per its convention if needed. Back up any file edited on s
 
 - [ ] **Step 1: USER STEP (Paul):** post a real voice recording into the Discord channel and ask SlowClaw to clean it. Expected: Hermes acknowledges → cleaned `target.ogg` + ✅ summary appears in-channel.
 
-- [ ] **Step 2: Verify job artifacts on fastfella:** `ls ~/sam-audio/spool/` shows the job; `status.json` = done; `job.log` clean.
+- [x] **Step 2: Verify job artifacts on fastfella:** `ls ~/sam-audio/spool/` shows the job; `status.json` = done; `job.log` clean.
 
-- [ ] **Step 3: Update sam-audio README** — add "Cortex Suite page" and "Discord (Hermes) loop" sections: architecture sketch, spool location, webhook file, bridge endpoints, sp4 wrapper. Commit: `docs: cortex + discord integration`.
+- [x] **Step 3: Update sam-audio README** — add "Cortex Suite page" and "Discord (Hermes) loop" sections: architecture sketch, spool location, webhook file, bridge endpoints, sp4 wrapper. Commit: `docs: cortex + discord integration`.
 
-- [ ] **Step 4: Update memory** — add/update a memory file describing the finished pipeline (bridge endpoints, spool, wrapper name, webhook file location) so future sessions don't re-derive it.
+- [x] **Step 4: Update memory** — add/update a memory file describing the finished pipeline (bridge endpoints, spool, wrapper name, webhook file location) so future sessions don't re-derive it.
 
-- [ ] **Step 5: Mark all checkboxes in this plan, final commit.**
+- [x] **Step 5: Mark all checkboxes in this plan, final commit.**
 
 ---
 

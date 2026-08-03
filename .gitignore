@@ -52,3 +52,6 @@ Thumbs.db
 
 # Monitoring
 memory_monitor_*.log
+
+# Audio-cleanup job spool (user uploads + results) — never commit
+spool/
