@@ -142,6 +142,20 @@ class WebhookTests(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class GpuLockTests(unittest.TestCase):
+    def test_lock_blocks_second_acquirer(self):
+        with clean_cli.gpu_lock(timeout_s=5):
+            fh2 = open(clean_cli.GPU_LOCK_PATH, "w")
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(fh2, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fh2.close()
+        # released now: acquire must succeed
+        fh3 = open(clean_cli.GPU_LOCK_PATH, "w")
+        fcntl.flock(fh3, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fh3, fcntl.LOCK_UN)
+        fh3.close()
+
+
 class ProgressProtocolTests(unittest.TestCase):
     def test_emit_writes_json_line(self):
         buf = io.StringIO()
