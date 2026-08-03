@@ -60,6 +60,91 @@ The app lets you upload one file, tune key options (trial seconds, normalize %, 
 
 The local Streamlit upload limit is set in `.streamlit/config.toml` with `server.maxUploadSize = 4096`, allowing files up to 4 GB.
 
+## `clean_cli.py` (Headless / Bridge Integration)
+
+A CLI wrapper around the same `sam_audio_cleanup` handler used by the Streamlit
+harness and the queue worker, intended for subprocess use — e.g. a Streamlit
+page spawning a foreground job, or the kb-query-server bridge detached-spawning
+a job for a Discord request. Progress streams as JSON lines on stdout; the
+final outcome lands in `<out-dir>/status.json`.
+
+```bash
+python clean_cli.py --input <audio_or_video_file> \
+    --job-json <path_to_job.json> \
+    --out-dir <output_dir> \
+    [--opus] [--notify-discord] [--gpu-lock-timeout <seconds>]
+```
+
+### Flags
+
+- `--input` (required) — path to the source audio/video file.
+- `--job-json` (required) — path to a JSON file with the job payload (same
+  fields as the Streamlit/worker payload: `description`, `convert_to_mono`,
+  `chunk_duration`, `overlap`, `rerank`, `predict_spans`, `normalize_percent`,
+  `output_sample_rate`, `output_channels`, `memory_fraction`, etc.).
+- `--out-dir` (required) — directory for `status.json`, `result.zip`, and
+  (with `--opus`) `target.ogg`. Created if missing.
+- `--opus` — after separation, extract `target.wav` from the result ZIP and
+  encode it to mono Opus (`target.ogg`) using a bitrate retry ladder
+  (`48k` → `24k`) to try to land under Discord's 25MB upload cap.
+- `--notify-discord` — POST a summary (and the Opus file, if produced) to a
+  Discord webhook on completion or failure. The webhook URL is **never** a
+  CLI argument — it is read from the `DISCORD_WEBHOOK_URL` environment
+  variable only. If the flag is set but the env var is unset/empty, the CLI
+  emits a `notify` progress line saying so and continues without notifying
+  (this is not a job failure).
+- `--gpu-lock-timeout` — seconds to wait for the exclusive GPU lock
+  (`~/.sam_audio_gpu.lock`) before giving up (default `7200`). The lock
+  serializes concurrent CLI invocations so only one job touches the GPU at a
+  time; while waiting, a `queue` progress line is emitted every ~30s.
+
+### Stdout protocol
+
+Every progress update is a single JSON object per line:
+
+```json
+{"type": "progress", "pct": 35, "stage": "separate", "message": "Running SAM-Audio separation (attempt 1/3: requested)", "ts": "14:32:39"}
+```
+
+`pct` is 0-100, `stage` is a short machine-readable phase name (`prepare`,
+`model`, `separate`, `postprocess`, `package`, `encode`, `notify`, `queue`,
+`complete`, ...), and `ts` is a `HH:MM:SS` timestamp. Consumers should parse
+stdout line-by-line and ignore any non-JSON lines (model/library warnings can
+still land on stdout/stderr around it).
+
+### `status.json` states
+
+- `"running"` — written immediately on start, with `pid`, `started_at`, and
+  `input`. A bridge that finds `status.json` in this state treats the job as
+  still in progress.
+- `"done"` — separation succeeded. Includes `metadata` (the handler's
+  `output_data`: duration, chunks processed, sample rate/channels, the
+  options actually applied, and an optional `warning` string) and
+  `finished_at`. **A `"done"` state does not guarantee a good result** — the
+  handler can flag a near-silent target (the description didn't match any
+  sound in the audio) via `metadata.warning` while still reporting `"done"`.
+  Callers that care about audio quality should check for `metadata.warning`,
+  not just the state.
+- `"error"` — an exception was raised (bad job-json, handler failure, GPU
+  lock timeout, etc.). Includes `error` (stringified exception) and
+  `finished_at`.
+
+### `--opus` failure handling
+
+If Opus encoding fails (e.g. `ffmpeg` missing or crashes) **after** separation
+has already succeeded and `result.zip` is valid on disk, the CLI treats this
+as a delivery problem, not a job failure: it keeps `state: "done"`, appends an
+`opus encode failed: ...` note to `metadata.warning` (preserving any prior
+warning), and — if `--notify-discord` is set — still posts the text summary,
+just without the audio attachment. The job only becomes `state: "error"` if
+separation itself fails.
+
+### Result contents
+
+`result.zip` contains `target.wav`, `residual.wav`, and `metadata.json`. With
+`--opus`, `target.ogg` (mono Opus) is written alongside `status.json` and
+`result.zip` in `--out-dir`.
+
 ## Colab Smoke Test (No Streamlit)
 
 To test the same processing pipeline on Google Colab (single file, conservative memory settings), use:
