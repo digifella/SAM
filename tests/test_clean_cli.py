@@ -1,8 +1,14 @@
+import fcntl
+import io
 import json
+import shutil as _shutil
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import soundfile as sf
 
 import clean_cli
 
@@ -110,9 +116,34 @@ class CleanCliCoreTests(unittest.TestCase):
             self.assertIn("ffmpeg not found", status["metadata"]["warning"])
 
 
+@unittest.skipUnless(_shutil.which("ffmpeg"), "ffmpeg not on PATH")
+class OpusEncodeTests(unittest.TestCase):
+    def test_encodes_small_wav_to_ogg(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wav = td / "t.wav"
+            sf.write(wav, np.random.uniform(-0.3, 0.3, 16000).astype(np.float32), 16000)
+            ogg = clean_cli.encode_opus(wav, td / "t.ogg")
+            self.assertTrue(ogg.exists())
+            self.assertGreater(ogg.stat().st_size, 0)
+
+
+class WebhookTests(unittest.TestCase):
+    def test_post_success(self):
+        fake = MagicMock(status_code=204)
+        with patch("requests.post", return_value=fake) as p:
+            ok = clean_cli.post_discord_webhook("https://discord/hook", "hello")
+        self.assertTrue(ok)
+        self.assertEqual(p.call_args.kwargs["json"]["content"], "hello")
+
+    def test_post_network_error_returns_false(self):
+        with patch("requests.post", side_effect=OSError("net down")):
+            ok = clean_cli.post_discord_webhook("https://discord/hook", "hello")
+        self.assertFalse(ok)
+
+
 class ProgressProtocolTests(unittest.TestCase):
     def test_emit_writes_json_line(self):
-        import io
         buf = io.StringIO()
         clean_cli.emit(42, "separate", "chunk 3/45", stream=buf)
         line = json.loads(buf.getvalue().strip())
