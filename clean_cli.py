@@ -130,8 +130,9 @@ def main(argv=None) -> int:
 
     input_path = Path(args.input)
     out_dir = Path(args.out_dir)
+    # out_dir must exist before anything below can write status.json into it —
+    # if this itself fails there is nowhere to record an error, so let it raise.
     out_dir.mkdir(parents=True, exist_ok=True)
-    payload = json.loads(Path(args.job_json).read_text())
 
     cancel = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -140,6 +141,11 @@ def main(argv=None) -> int:
     write_status(out_dir, "running", pid=os.getpid(), started_at=_now(),
                  input=input_path.name)
     try:
+        # job-json parsing lives inside the try so a malformed/partial file
+        # still lands as state:"error" instead of leaving status.json stuck
+        # on "running" forever (the bridge treats a missing/never-updated
+        # status.json as still-pending).
+        payload = json.loads(Path(args.job_json).read_text())
         with gpu_lock(args.gpu_lock_timeout):
             result = handle(
                 input_path=input_path,
@@ -160,14 +166,29 @@ def main(argv=None) -> int:
             shutil.rmtree(zip_src.parent, ignore_errors=True)
 
         ogg: Path | None = None
+        opus_error: str | None = None
         if args.opus:
             emit(95, "encode", "encoding target.wav to Opus")
-            with tempfile.TemporaryDirectory() as td:
-                with zipfile.ZipFile(final_zip) as zf:
-                    zf.extract("target.wav", td)
-                ogg = encode_opus(Path(td) / "target.wav", out_dir / "target.ogg")
+            try:
+                with tempfile.TemporaryDirectory() as td:
+                    with zipfile.ZipFile(final_zip) as zf:
+                        zf.extract("target.wav", td)
+                    ogg = encode_opus(Path(td) / "target.wav", out_dir / "target.ogg")
+            except Exception as exc:
+                # Separation already succeeded and result.zip is valid on disk —
+                # a broken/missing ffmpeg is a delivery problem, not a job
+                # failure. Degrade like post_discord_webhook's own network
+                # failures do: keep state:"done", surface a warning, notify
+                # without the audio attachment.
+                opus_error = str(exc)
+                ogg = None
+                emit(95, "encode", f"opus encode failed, continuing without it: {opus_error}")
 
         meta = result.get("output_data", {}) or {}
+        if opus_error:
+            meta = dict(meta)
+            prior_warning = meta.get("warning")
+            meta["warning"] = (f"{prior_warning}; " if prior_warning else "") + f"opus encode failed: {opus_error}"
         summary = (f"✅ Cleaned `{input_path.name}` — "
                    f"{meta.get('duration_seconds', '?')}s of audio, "
                    f"description: \"{meta.get('description', '')}\"")
