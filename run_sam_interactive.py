@@ -711,6 +711,58 @@ def get_audio_duration(audio_path: Path) -> float:
     return info.duration
 
 
+# Defect-B floor (Task 9b): sam_audio's DACVAE codec (sam_audio/model/codec.py
+# DACVAEEncoder._pad) reflect-pads the tail of every chunk up to `hop_length`
+# (1920 samples at the codec's internal 48kHz operating rate) samples wide,
+# and torch's reflect pad mode requires the input to be longer than the pad
+# width. A degenerate trailing chunk -- typically produced when float
+# accumulation of `step` (or a non-round file duration) lands `start` a
+# hair below total_duration, leaving a handful-of-samples remainder -- can
+# therefore crash with "Padding size should be less than the corresponding
+# input dimension" (measured: a 6-sample chunk against a 1914-sample pad).
+# The analytic worst case is ~1919 samples (~40ms @ 48kHz). 1.6s is the
+# smallest final-chunk duration directly measured to decode cleanly (the
+# validated chunk_duration=30 profile on Apollo13.wav, 57.64s, whose final
+# chunk is 1.64s) -- comfortably (>35x) above the analytic floor while
+# staying at the smallest value with direct evidence behind it. A final
+# chunk shorter than this is folded into the preceding chunk instead of
+# being emitted alone (dropping it silently is not acceptable).
+MIN_CHUNK_SECONDS = 1.6
+
+
+def _chunk_boundaries(total_duration: float, chunk_duration: float, overlap: float) -> list:
+    """
+    Compute the (start, end) time boundaries chunk_audio_generator and
+    count_chunks both walk. Pure function (no file I/O), so the stepping
+    arithmetic -- including the degenerate-trailing-chunk guard -- is
+    directly unit-testable without an audio file or a GPU.
+
+    Folds a final remainder shorter than MIN_CHUNK_SECONDS into the
+    preceding chunk (extending its end to total_duration) rather than
+    emitting it standalone or dropping it.
+    """
+    if chunk_duration <= 0:
+        raise ValueError("chunk_duration must be > 0 for chunked processing")
+    if overlap < 0:
+        raise ValueError("overlap must be >= 0")
+    if overlap >= chunk_duration:
+        raise ValueError("overlap must be less than chunk_duration")
+
+    step = chunk_duration - overlap  # Non-overlapping portion
+    boundaries = []
+    start = 0.0
+    while start < total_duration:
+        end = min(start + chunk_duration, total_duration)
+        boundaries.append([start, end])
+        start += step
+
+    while len(boundaries) > 1 and (boundaries[-1][1] - boundaries[-1][0]) < MIN_CHUNK_SECONDS:
+        _, last_end = boundaries.pop()
+        boundaries[-1][1] = last_end
+
+    return [tuple(b) for b in boundaries]
+
+
 def chunk_audio_generator(audio_path: Path, chunk_duration: float, overlap: float):
     """
     Generator that yields audio chunks one at a time to minimize memory usage.
@@ -720,19 +772,7 @@ def chunk_audio_generator(audio_path: Path, chunk_duration: float, overlap: floa
     total_duration = info.duration
     sample_rate = info.samplerate
 
-    if chunk_duration <= 0:
-        raise ValueError("chunk_duration must be > 0 for chunked processing")
-    if overlap < 0:
-        raise ValueError("overlap must be >= 0")
-    if overlap >= chunk_duration:
-        raise ValueError("overlap must be less than chunk_duration")
-
-    start = 0.0
-    step = chunk_duration - overlap  # Non-overlapping portion
-
-    while start < total_duration:
-        end = min(start + chunk_duration, total_duration)
-
+    for start, end in _chunk_boundaries(total_duration, chunk_duration, overlap):
         # Read chunk
         start_frame = int(start * sample_rate)
         num_frames = int((end - start) * sample_rate)
@@ -746,9 +786,6 @@ def chunk_audio_generator(audio_path: Path, chunk_duration: float, overlap: floa
 
         yield (start, end, audio_data, sr)
 
-        # Move to next chunk (advance by non-overlapping portion)
-        start += step
-
 
 def count_chunks(audio_path: Path, chunk_duration: float, overlap: float) -> int:
     """
@@ -756,23 +793,9 @@ def count_chunks(audio_path: Path, chunk_duration: float, overlap: float) -> int
     """
     if chunk_duration <= 0:
         return 1
-    if overlap < 0:
-        raise ValueError("overlap must be >= 0")
-    if overlap >= chunk_duration:
-        raise ValueError("overlap must be less than chunk_duration")
 
     info = sf.info(audio_path)
-    total_duration = info.duration
-
-    count = 0
-    start = 0.0
-    step = chunk_duration - overlap  # Non-overlapping portion
-
-    while start < total_duration:
-        count += 1
-        start += step
-
-    return count
+    return len(_chunk_boundaries(info.duration, chunk_duration, overlap))
 
 
 def process_chunk(
