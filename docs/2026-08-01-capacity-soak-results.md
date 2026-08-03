@@ -150,9 +150,45 @@ Suite grew 42 → 69 tests across the plan; full suite green at time of writing
   process start, and its gate requires the OOM ladder never engage). The RAM figure was
   re-measured alone; VRAM and timing were not, but both passed with wide margins.
 
-## Short files and the non-chunked path — investigated 2026-08-03, NOT a defect
+## Short files and the non-chunked path — CONFIRMED DEFECT
 
-**This section previously reported a defect. That report was wrong and is retracted.**
+> **⚠️ RETRACTION WITHDRAWN (2026-08-03, later the same day).** An earlier version of this
+> section retracted the defect as "not reproducible". **That retraction was wrong** and is
+> itself now withdrawn. The defect is real; it is *intermittent*, which is why one clean run
+> appeared to refute it. The original text is kept below the evidence table for the record.
+>
+> **The non-chunked path fails roughly two runs in three. The chunked path has never failed.**
+>
+> Apollo13.wav, 57.64s, input −20.7 dBFS, description "a man speaking over a radio",
+> every run identical except `chunk_duration`. Target RMS in dBFS; below −50 is silence:
+>
+> | Run | Path | Target | Verdict |
+> |---|---|---|---|
+> | `ram_probe` | non-chunked | −70.9 | **SILENT** |
+> | controlled experiment A | non-chunked | −18.1 | healthy |
+> | Task 9 CLI smoke | non-chunked | −78.1 | **SILENT** |
+> | flakiness rep 1 | non-chunked | −71.0 | **SILENT** |
+> | flakiness rep 2 | non-chunked | −70.6 | **SILENT** |
+> | flakiness rep 3 | non-chunked | −24.0 | healthy (weak) |
+> | controlled experiment B | chunked (cd=30) | −17.8 | healthy |
+> | flakiness rep 1 | chunked (cd=30) | −18.1 | healthy |
+> | flakiness rep 2 | chunked (cd=30) | −19.5 | healthy |
+> | flakiness rep 3 | chunked (cd=30) | −19.6 | healthy |
+>
+> **non-chunked: 4 silent / 6. chunked: 0 silent / 4**, and the chunked results cluster
+> tightly (−17.8 to −19.6) while even the non-chunked "healthy" outliers are weaker.
+>
+> **Method error worth naming, because it is the reusable lesson:** the retraction ran
+> *one* trial per condition, got a healthy non-chunked result, and concluded the defect did
+> not exist. A single passing sample cannot refute an intermittent failure — it can only fail
+> to reproduce it. "Not reproduced in this run" is not "not a defect". Flaky behaviour needs
+> repetition sized to the claim before either confirming or dismissing it.
+>
+> **Consequence:** this matters for `clean_cli.py` (Task 6) and the Cortex page (Task 10),
+> which routinely send sub-60s files — and for the Discord loop, where voice notes are
+> typically 10–30s and would land on the non-chunked path every time.
+
+### Original (withdrawn) retraction text, kept for the record
 
 The original claim: the `ram_probe` run took the non-chunked path (57.64s < 60s
 `chunk_duration` → "Processing entire file") and produced a near-silent target at
