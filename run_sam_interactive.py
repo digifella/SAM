@@ -729,6 +729,53 @@ def get_audio_duration(audio_path: Path) -> float:
 # being emitted alone (dropping it silently is not acceptable).
 MIN_CHUNK_SECONDS = 1.6
 
+# Defect-A short-file threshold (Task 9b): files shorter than chunk_duration
+# used to take the non-chunked path unconditionally, and that path is
+# intermittently unreliable -- measured ~2/3 runs producing a silent
+# target on identical input, vs. 0/4 silent on the chunked path. Such files
+# are now forced through the chunked path with chunk_duration shrunk to
+# roughly half the file's duration (guaranteeing >=2 chunks). This
+# threshold gates how small that halved duration is allowed to get before
+# forcing multiple chunks is abandoned in favour of the (documented,
+# already-unreliable) non-chunked path: 3.0s is comfortably (~1.9x) above
+# MIN_CHUNK_SECONDS, so a forced chunk is never minted right at the
+# Defect-B fold boundary, and it matches this task's own "too tiny to
+# chunk meaningfully" examples -- a 3s voice note or a 1s blip both fall
+# back (candidate half-durations of 1.5s and 0.5s).
+FORCE_CHUNK_MIN_SECONDS = 3.0
+
+
+def _decide_chunking(duration: float, chunk_duration: float, overlap: float) -> tuple:
+    """
+    Decide whether process_audio_file should chunk, and with what effective
+    chunk_duration/overlap. Pure function (no I/O), so the routing decision
+    is directly unit-testable without a GPU or an audio file.
+
+    Returns (use_chunking, effective_chunk_duration, effective_overlap, forced).
+
+    Long files (duration > chunk_duration) are unchanged: use_chunking=True
+    with the caller's own chunk_duration/overlap, exactly as before this
+    fix -- the validated 45-min soak path (chunk_duration=60 on a 2708s
+    input) must not move.
+
+    Short files (duration <= chunk_duration) used to take the non-chunked
+    path unconditionally (Defect A). They now force chunking by roughly
+    halving chunk_duration, with overlap capped to strictly less than that
+    halved duration -- unless even half the file is shorter than
+    FORCE_CHUNK_MIN_SECONDS, in which case the file is genuinely too short
+    to chunk meaningfully and the non-chunked path is used, but this never
+    raises.
+    """
+    if duration > chunk_duration:
+        return True, chunk_duration, overlap, False
+
+    candidate_chunk_duration = duration / 2.0
+    candidate_overlap = min(overlap, candidate_chunk_duration / 2.0)
+    if candidate_chunk_duration >= FORCE_CHUNK_MIN_SECONDS and candidate_overlap < candidate_chunk_duration:
+        return True, candidate_chunk_duration, candidate_overlap, True
+
+    return False, chunk_duration, overlap, False
+
 
 def _chunk_boundaries(total_duration: float, chunk_duration: float, overlap: float) -> list:
     """
@@ -1033,18 +1080,34 @@ def process_audio_file(
         print(f"[Step 2] Audio duration: {duration:.2f} seconds")
         logger.info(f"Audio duration: {duration:.2f} seconds")
 
-        # Determine if chunking is needed
-        use_chunking = duration > chunk_duration
+        # Determine if chunking is needed. Long files are unaffected (same
+        # condition as before). Short files now force chunking too -- the
+        # non-chunked path is intermittently unreliable (Task 9b Defect A)
+        # -- via effective_chunk_duration/effective_overlap, which fall
+        # back to the caller's own chunk_duration/overlap unchanged when
+        # not forcing. See _decide_chunking for the full rationale.
+        use_chunking, effective_chunk_duration, effective_overlap, forced_short_chunking = _decide_chunking(
+            duration, chunk_duration, overlap
+        )
         if use_chunking:
-            print(f"[Step 3] Using chunking (chunk size: {chunk_duration}s, overlap: {overlap}s)")
-            logger.info(f"Using chunking (chunk size: {chunk_duration}s, overlap: {overlap}s)")
+            if forced_short_chunking:
+                print(f"[Step 3] Short file ({duration:.2f}s) - forcing chunking for reliability "
+                      f"(effective chunk size: {effective_chunk_duration:.2f}s, overlap: {effective_overlap:.2f}s)")
+                logger.info(
+                    "Short file (%.2fs) - forcing chunking for reliability "
+                    "(effective chunk size: %.2fs, overlap: %.2fs)",
+                    duration, effective_chunk_duration, effective_overlap,
+                )
+            else:
+                print(f"[Step 3] Using chunking (chunk size: {chunk_duration}s, overlap: {overlap}s)")
+                logger.info(f"Using chunking (chunk size: {chunk_duration}s, overlap: {overlap}s)")
         else:
             print("[Step 3] Processing entire file (no chunking needed)")
             logger.info("Processing entire file (no chunking needed)")
 
         if use_chunking:
             # Count chunks without loading into memory
-            num_chunks = count_chunks(process_path, chunk_duration, overlap)
+            num_chunks = count_chunks(process_path, effective_chunk_duration, effective_overlap)
             print(f"✓ Will process {num_chunks} chunks (streaming mode - low memory)")
             logger.info(f"Will process {num_chunks} chunks (streaming mode)")
             log_memory_stats(logger, "Before chunk processing", device)
@@ -1058,7 +1121,7 @@ def process_audio_file(
             logger.info(f"Model output sample rate: {output_sample_rate} Hz")
 
             # Stream chunks one at a time using generator
-            for i, (start, end, chunk_data, sr) in enumerate(chunk_audio_generator(process_path, chunk_duration, overlap), 1):
+            for i, (start, end, chunk_data, sr) in enumerate(chunk_audio_generator(process_path, effective_chunk_duration, effective_overlap), 1):
                 if is_cancelled_cb and is_cancelled_cb():
                     raise JobCancelledError("Cancelled during chunk processing")
                 ensure_memory_headroom(logger, f"chunk {i} inference", retries=1, wait_seconds=1)
@@ -1109,10 +1172,10 @@ def process_audio_file(
             log_memory_stats(logger, "Before merging", device)
 
             # Use model output sample rate for merging
-            target_audio = merge_chunks(target_chunks, overlap, output_sample_rate)
+            target_audio = merge_chunks(target_chunks, effective_overlap, output_sample_rate)
             log_memory_stats(logger, "After merging targets", device)
 
-            residual_audio = merge_chunks(residual_chunks, overlap, output_sample_rate)
+            residual_audio = merge_chunks(residual_chunks, effective_overlap, output_sample_rate)
             log_memory_stats(logger, "After merging residuals", device)
 
             # Set sample_rate for saving
