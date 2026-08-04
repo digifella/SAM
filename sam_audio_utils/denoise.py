@@ -206,6 +206,16 @@ def denoise_file(input_path, target_path, residual_path,
         if is_sil:
             target[i * n:(i + 1) * n] = 0.0
 
+    # frame_rms_dbfs (and therefore silence_mask) only covers whole frames and
+    # drops any trailing remainder shorter than one frame. Check that leftover
+    # tail directly -- via the same single-value branch frame_rms_dbfs takes
+    # for signals shorter than a frame -- so a silent tail isn't left smeared
+    # by overlap-add just because it didn't land on a frame boundary.
+    tail_start = (len(x) // n) * n
+    tail = x[tail_start:]
+    if tail.size and frame_rms_dbfs(tail, sr, frame_s)[0] <= SILENCE_GATE_DBFS:
+        target[tail_start:] = 0.0
+
     residual = x - target
 
     report(90, "writing outputs")
