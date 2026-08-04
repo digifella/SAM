@@ -18,7 +18,14 @@ class CleanCliCoreTests(unittest.TestCase):
         td = Path(td)
         inp = td / "in.wav"; inp.write_bytes(b"RIFFfake")
         jj = td / "job.json"
-        jj.write_text(json.dumps({"description": "speech"}) if job_json_text is None else job_json_text)
+        # method is pinned to "separate" explicitly: these tests mock handle() to
+        # exercise the SAM separation path specifically. clean_cli now routes by
+        # default, and "speech" alone would send an unpinned payload to the denoise
+        # path instead (explicit method always beats inference — see
+        # clean_cli.choose_method). Do not remove this pin; it is what keeps these
+        # tests testing the path they were written to test, not a "simplification".
+        jj.write_text(json.dumps({"description": "speech", "method": "separate"})
+                      if job_json_text is None else job_json_text)
         out = td / "out"
         # --gpu-lock-timeout kept short and GPU_LOCK_PATH patched to a
         # per-test tmp file below: this host runs clean_cli for real jobs, so
@@ -114,6 +121,41 @@ class CleanCliCoreTests(unittest.TestCase):
             self.assertEqual(status["state"], "done")
             self.assertIn("opus encode failed", status["metadata"]["warning"])
             self.assertIn("ffmpeg not found", status["metadata"]["warning"])
+
+    def test_denoise_method_produces_done_status_and_result_zip(self):
+        # The other CleanCliCoreTests all pin method="separate" to exercise handle().
+        # This test covers the other branch clean_cli.main() can now take: a
+        # "method": "denoise" payload should never reach handle() at all, and should
+        # still land the same state:"done" / result.zip contract. Needs a real
+        # (short, synthetic) wav — denoise_file reads actual audio — but stays fast:
+        # 7.5s at 8kHz, a quiet noise region followed by a louder "speech" region so
+        # estimate_noise_profile has real headroom to find, no repo fixture involved.
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sr = 8000
+            rng = np.random.default_rng(0)
+            quiet = rng.uniform(-0.01, 0.01, int(3.5 * sr))
+            loud = rng.uniform(-0.2, 0.2, int(4.0 * sr))
+            audio = np.concatenate([quiet, loud]).astype(np.float32)
+            inp = td / "in.wav"
+            sf.write(inp, audio, sr)
+            jj = td / "job.json"
+            jj.write_text(json.dumps({"description": "clean this up", "method": "denoise"}))
+            out = td / "out"
+            argv = ["--input", str(inp), "--job-json", str(jj), "--out-dir", str(out),
+                    "--gpu-lock-timeout", "5"]
+            with patch.object(clean_cli, "GPU_LOCK_PATH", td / "gpu_test.lock"), \
+                 patch.object(clean_cli, "handle") as mock_handle:
+                rc = clean_cli.main(argv)
+            self.assertEqual(rc, 0)
+            mock_handle.assert_not_called()
+            status = json.loads((out / "status.json").read_text())
+            self.assertEqual(status["state"], "done")
+            self.assertEqual(status["metadata"]["method"], "spectral_subtraction")
+            import zipfile
+            with zipfile.ZipFile(out / "result.zip") as zf:
+                names = set(zf.namelist())
+            self.assertEqual(names, {"target.wav", "residual.wav", "metadata.json"})
 
 
 @unittest.skipUnless(_shutil.which("ffmpeg"), "ffmpeg not on PATH")

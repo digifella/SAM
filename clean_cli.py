@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from sam_audio_utils.denoise import denoise_file  # noqa: E402
 from worker.handlers.sam_audio_cleanup import handle  # noqa: E402
 
 GPU_LOCK_PATH = Path.home() / ".sam_audio_gpu.lock"
@@ -118,6 +119,32 @@ def _notify(args, content: str, file_path: Path | None = None) -> None:
     emit(99, "notify", "posted to Discord" if ok else "Discord post FAILED")
 
 
+# Positive evidence that a SECOND source should be separated out. Anything else
+# denoises, because that is the reversible failure: an under-cleaned file is
+# still listenable, whereas SAM on single-speaker noise returns an empty stem.
+_MIXTURE_WORDS = (
+    "guitar", "piano", "drum", "bass", "violin", "music", "song", "instrument",
+    "dog", "bark", "bird", "engine", "traffic", "siren", "alarm", "applause",
+    "crowd", "tv", "television", "radio", "phone", "typing", "keyboard",
+)
+_MIXTURE_PHRASES = (" over ", " behind ", " through ", " on top of ", " against ")
+
+
+def choose_method(description: str, explicit: str = "auto") -> str:
+    """Pick the processing method. Explicit always beats inference."""
+    if explicit in ("denoise", "separate"):
+        return explicit
+    if explicit != "auto":
+        raise ValueError(
+            f"unknown method {explicit!r}; expected auto, denoise or separate")
+    text = (description or "").lower()
+    if any(w in text for w in _MIXTURE_WORDS):
+        return "separate"
+    if any(p in f" {text} " for p in _MIXTURE_PHRASES):
+        return "separate"
+    return "denoise"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="SAM-Audio cleanup CLI")
     ap.add_argument("--input", required=True)
@@ -146,15 +173,39 @@ def main(argv=None) -> int:
         # on "running" forever (the bridge treats a missing/never-updated
         # status.json as still-pending).
         payload = json.loads(Path(args.job_json).read_text())
-        with gpu_lock(args.gpu_lock_timeout):
-            result = handle(
-                input_path=input_path,
-                input_data=payload,
-                job={"id": 0, "input_filename": input_path.name},
-                progress_cb=lambda pct, msg, stage=None: emit(pct, stage or "processing", msg),
-                is_cancelled_cb=cancel.is_set,
-                work_dir=out_dir,
-            )
+        method = choose_method(payload.get("description", ""),
+                               payload.get("method", "auto"))
+        strength = payload.get("strength", "normal")
+        emit(5, "route", f"method={method}")
+
+        if method == "denoise":
+            # No GPU lock, no model: this path is pure CPU DSP, so it runs even
+            # while a SAM job holds the card.
+            work = out_dir / "denoise_work"
+            work.mkdir(parents=True, exist_ok=True)
+            target_wav = work / "target.wav"
+            residual_wav = work / "residual.wav"
+            meta = denoise_file(input_path, target_wav, residual_wav,
+                                strength=strength,
+                                progress_cb=lambda p, m: emit(p, "denoise", m))
+            meta["description"] = payload.get("description", "")
+            meta["input_filename"] = input_path.name
+            zip_src = work / "result.zip"
+            with zipfile.ZipFile(zip_src, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(target_wav, "target.wav")
+                zf.write(residual_wav, "residual.wav")
+                zf.writestr("metadata.json", json.dumps(meta, indent=2))
+            result = {"output_data": meta, "output_file": zip_src}
+        else:
+            with gpu_lock(args.gpu_lock_timeout):
+                result = handle(
+                    input_path=input_path,
+                    input_data=payload,
+                    job={"id": 0, "input_filename": input_path.name},
+                    progress_cb=lambda pct, msg, stage=None: emit(pct, stage or "processing", msg),
+                    is_cancelled_cb=cancel.is_set,
+                    work_dir=out_dir,
+                )
 
         zip_src = Path(result["output_file"])
         final_zip = out_dir / "result.zip"
