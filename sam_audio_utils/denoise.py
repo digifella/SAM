@@ -127,3 +127,43 @@ def estimate_noise_profile(x: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
         "warnings": warnings,
     }
     return profile, info
+
+
+from scipy.signal import istft as _istft
+
+
+def spectral_subtract(x: np.ndarray, sr: int, profile: np.ndarray,
+                      strength: str = "normal") -> np.ndarray:
+    """Subtract the noise magnitude spectrum, keeping the original phase.
+
+    alpha over-subtracts to cover frame-to-frame noise fluctuation; beta is a
+    spectral floor that stops bins being punched to zero. The floor is what
+    prevents musical noise: leaving a low noise bed sounds cleaner than
+    removing everything.
+    """
+    if strength not in STRENGTH_PRESETS:
+        raise ValueError(
+            f"unknown strength {strength!r}; expected one of {sorted(STRENGTH_PRESETS)}")
+    alpha, beta = STRENGTH_PRESETS[strength]
+
+    x = _mono(x)
+    n = len(x)
+    _, _, Z = _stft(x, fs=sr, nperseg=STFT_WINDOW, noverlap=STFT_OVERLAP)
+    mag, phase = np.abs(Z), np.angle(Z)
+
+    noise = profile[:, None]
+    # Gain form rather than direct subtraction: it is what the floor clamps.
+    gain = 1.0 - alpha * noise / np.maximum(mag, _FLOOR)
+    gain = np.maximum(gain, beta)
+
+    # Smooth the gain across adjacent frames: isolated single-frame spikes are
+    # exactly what warbles.
+    if gain.shape[1] >= 3:
+        gain[:, 1:-1] = (gain[:, :-2] + gain[:, 1:-1] + gain[:, 2:]) / 3.0
+
+    _, out = _istft(gain * mag * np.exp(1j * phase), fs=sr,
+                    nperseg=STFT_WINDOW, noverlap=STFT_OVERLAP)
+    out = np.asarray(out, dtype=np.float64)
+    if len(out) < n:
+        out = np.pad(out, (0, n - len(out)))
+    return out[:n]
