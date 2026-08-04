@@ -167,3 +167,60 @@ def spectral_subtract(x: np.ndarray, sr: int, profile: np.ndarray,
     if len(out) < n:
         out = np.pad(out, (0, n - len(out)))
     return out[:n]
+
+
+from pathlib import Path
+from typing import Callable, Optional
+
+import soundfile as sf
+
+
+def denoise_file(input_path, target_path, residual_path,
+                 strength: str = "normal",
+                 progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
+    """Denoise a file, writing the cleaned target and the removed residual.
+
+    residual = input - target, so a caller can verify nothing was eaten.
+    """
+    def report(pct, msg):
+        if progress_cb:
+            progress_cb(pct, msg)
+
+    input_path = Path(input_path)
+    data, sr = sf.read(input_path, always_2d=False)
+    x = _mono(data)
+
+    report(10, "analysing noise floor")
+    profile, info = estimate_noise_profile(x, sr)
+
+    report(35, f"subtracting noise (strength={strength})")
+    target = spectral_subtract(x, sr, profile, strength=strength)
+
+    # Digital silence stays digitally silent -- overlap-add can otherwise smear
+    # energy into a run that was already perfectly clean.
+    report(75, "restoring silent regions")
+    frame_s = 0.25
+    sil = silence_mask(x, sr, frame_s)
+    n = max(1, int(frame_s * sr))
+    for i, is_sil in enumerate(sil):
+        if is_sil:
+            target[i * n:(i + 1) * n] = 0.0
+
+    residual = x - target
+
+    report(90, "writing outputs")
+    sf.write(Path(target_path), target, sr)
+    sf.write(Path(residual_path), residual, sr)
+
+    return {
+        "method": "spectral_subtraction",
+        "strength": strength,
+        "sample_rate": int(sr),
+        "duration_seconds": round(len(x) / sr, 3),
+        "noise_window_start_s": info["window_start_s"],
+        "noise_window_dbfs": info["window_dbfs"],
+        "headroom_db": info["headroom_db"],
+        "drift_db": info["drift_db"],
+        "silence_fraction": round(float(sil.mean()), 4),
+        "warnings": info["warnings"],
+    }
