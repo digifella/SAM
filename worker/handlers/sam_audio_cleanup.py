@@ -172,19 +172,97 @@ def _rms_dbfs(path: Path) -> float:
     return 20.0 * math.log10(rms)
 
 
+# Telephone band -- where voiced speech puts most of its energy.
+SPEECH_BAND_HZ = (300.0, 3400.0)
+# A speech target below this share of its energy in the speech band is not speech.
+# Measured reference (2026-08-04): a target that was 93.5% sub-300Hz rumble carried
+# 0.1% here, while the residual holding the real voice carried 58.6%. Genuine
+# speech on this material sits well above 20%, so the threshold has wide margin
+# on both sides.
+MIN_SPEECH_BAND_FRACTION = 0.10
+# Words that mean the caller asked for SPEECH. The band check only applies then --
+# extracting "a dog barking" or "bass guitar" legitimately has no speech energy.
+_SPEECH_WORDS = ("speak", "speech", "talking", "talk", "voice", "vocal",
+                 "narrat", "sing", "conversation", "interview", "podcast")
+
+
+def _speech_band_fraction(path: Path) -> float:
+    """Share of total energy sitting in the speech band.
+
+    RMS alone cannot tell a voice from a rumble: a target can be loud and contain
+    no speech at all. This is what distinguishes them.
+    """
+    data, sr = sf.read(path, always_2d=False)
+    arr = np.asarray(data, dtype=np.float64)
+    if arr.ndim > 1:
+        arr = arr.mean(axis=1)
+    if arr.size < 1024:
+        return 1.0  # too short to judge; don't invent a warning
+    # Average the spectrum over windows so one loud moment can't dominate.
+    win = 8192
+    hops = max(1, arr.size // win)
+    total = 0.0
+    band = 0.0
+    freqs = np.fft.rfftfreq(win, 1.0 / sr)
+    mask = (freqs >= SPEECH_BAND_HZ[0]) & (freqs < SPEECH_BAND_HZ[1])
+    taper = np.hanning(win)
+    for i in range(min(hops, 64)):  # cap the work on long files
+        seg = arr[i * win:(i + 1) * win]
+        if seg.size < win:
+            break
+        power = np.abs(np.fft.rfft(seg * taper)) ** 2
+        total += float(power.sum())
+        band += float(power[mask].sum())
+    return (band / total) if total > 0 else 1.0
+
+
 def _separation_sanity_warning(target_path: Path, residual_path: Path, description: str) -> Optional[str]:
-    """Detect a near-silent target: the description matched nothing in the audio."""
+    """Flag a target that cannot be what the description asked for.
+
+    Two failure modes, both seen in practice:
+      1. near-silent target -- the description matched nothing;
+      2. loud target with no speech in it -- the description asked for a voice
+         but SAM extracted rumble, and the voice went into the residual. RMS
+         cannot see this one, which is why it shipped undetected.
+    """
     target_db = _rms_dbfs(target_path)
-    if target_db >= SILENT_RMS_DBFS:
-        return None
     residual_db = _rms_dbfs(residual_path)
-    return (
-        f"Target output is near-silent ({target_db:.1f} dBFS RMS) - the description "
-        f"'{description}' may not match any sound in the audio. SAM-Audio extracts the "
-        f"sound you DESCRIBE (e.g. 'a man speaking over a radio'), it does not follow "
-        f"instructions like 'remove X'. The unextracted audio is in residual.wav "
-        f"({residual_db:.1f} dBFS RMS)."
+
+    if target_db < SILENT_RMS_DBFS:
+        return (
+            f"Target output is near-silent ({target_db:.1f} dBFS RMS) - the description "
+            f"'{description}' may not match any sound in the audio. SAM-Audio extracts the "
+            f"sound you DESCRIBE (e.g. 'a man speaking over a radio'), it does not follow "
+            f"instructions like 'remove X'. The unextracted audio is in residual.wav "
+            f"({residual_db:.1f} dBFS RMS)."
+        )
+
+    asked_for_speech = any(w in (description or "").lower() for w in _SPEECH_WORDS)
+    if not asked_for_speech:
+        return None
+
+    target_speech = _speech_band_fraction(target_path)
+    if target_speech >= MIN_SPEECH_BAND_FRACTION:
+        return None
+
+    residual_speech = _speech_band_fraction(residual_path)
+    msg = (
+        f"Target output is loud ({target_db:.1f} dBFS RMS) but contains almost no speech: "
+        f"only {target_speech * 100:.1f}% of its energy is in the "
+        f"{SPEECH_BAND_HZ[0]:.0f}-{SPEECH_BAND_HZ[1]:.0f}Hz speech band. The description "
+        f"'{description}' asked for a voice, so this is very likely the WRONG stem - SAM "
+        f"appears to have extracted noise or rumble instead."
     )
+    if residual_speech > target_speech:
+        msg += (
+            f" residual.wav carries {residual_speech * 100:.1f}% speech-band energy, so the "
+            f"voice is probably THERE, not in target.wav."
+        )
+    msg += (
+        " Note SAM-Audio is source separation, not noise reduction: for a single speaker "
+        "with broadband noise, a spectral-subtraction denoiser is the better tool."
+    )
+    return msg
 
 
 LOUDNORM_I = -16.0
