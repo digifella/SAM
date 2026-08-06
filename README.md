@@ -190,6 +190,66 @@ Discord's attachment cap (25MB for non-Nitro) bounds the input: roughly 2 minute
 48kHz mono WAV, or ~25 minutes of 128kbps MP3. Results come back as Opus with a
 bitrate ladder to stay under the same cap.
 
+## Denoising (default cleanup path)
+
+`clean_cli.py` denoises by default and only routes to SAM-Audio separation on positive
+evidence of a mixture. SAM-Audio is source separation, not noise reduction — on the real
+9m39s single-speaker test file (`Fionnuala_raw.wav`) SAM returned a "cleaned" target that
+was 93.5% sub-300Hz rumble with 0.1% speech-band energy (the voice went to the residual
+instead), and the pipeline reported success. The denoiser exists to fix that.
+
+The routing rule follows from an asymmetry: an under-cleaned file is still listenable,
+whereas SAM on single-speaker noise returns an essentially empty stem. Ambiguity
+therefore resolves to denoise. `choose_method()` only routes to `separate` when the
+description names a source to extract *and* implies a mixture — a named second source
+(`_MIXTURE_WORDS`: guitar, dog, siren, music, ...) or a phrase implying a competing sound
+(`_MIXTURE_PHRASES`: " over ", " behind ", " through ", " on top of ", " against "). Everything
+else — "clean this up", "remove background noise", "a person speaking", an empty
+description — denoises.
+
+### `job.json` keys
+
+No new CLI flags were added — the bridge, Cortex and the sp4 wrapper send exactly what
+they already send, and routing reads two keys already carried in the existing payload:
+
+```json
+{"description": "...", "method": "auto|denoise|separate", "strength": "gentle|normal|aggressive"}
+```
+
+- `method` — `"auto"` (default), `"denoise"`, or `"separate"`. An explicit value always
+  wins over inference.
+- `strength` — one of `STRENGTH_PRESETS`: `"gentle"`, `"normal"` (default), or
+  `"aggressive"`, trading off how much noise is removed against the risk of musical-noise
+  warble.
+
+### No GPU, no lock
+
+`sam_audio_utils/denoise.py` is pure numpy/scipy spectral subtraction — no torch, no
+model, no GPU. `clean_cli.py` skips `gpu_lock` entirely on this path, so a denoise job
+runs immediately even while a SAM job holds the card.
+
+### The silence gate
+
+`Fionnuala_raw.wav` is a collation of separate cuts, so roughly a quarter of it is
+absolute digital zero — the quietest thing in the file. A noise profile estimated from
+those frames would be all zeros: it subtracts nothing while appearing to succeed, which
+is the same shape of failure as the SAM incident. Frames at or below `SILENCE_GATE_DBFS`
+(-90 dBFS) are therefore excluded from noise profiling and from the quietest-window
+search, and any run of true digital silence in the input is written back out as exact
+zero rather than left to be smeared by STFT overlap-add.
+
+### Checking nothing was eaten
+
+`residual.wav` (`= input - target`) is the diagnostic: listen to it, and if you can hear
+the speaker, the settings were too aggressive. That is exactly how the original SAM
+failure was found — the residual had the voice in it, not the target.
+
+On the real test file the automated result correlates **0.9983** with Paul's hand-tuned
+WavePad output (the oracle), removes **19.3 dB** of noise floor versus WavePad's 18.8 dB,
+and retains **0.9051** of speech-band energy versus WavePad's 0.9078 — against SAM's
+0.0018 on the same file. Sample rate is preserved end to end: 44.1kHz in, 44.1kHz out,
+no resampling.
+
 ## Colab Smoke Test (No Streamlit)
 
 To test the same processing pipeline on Google Colab (single file, conservative memory settings), use:
