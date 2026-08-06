@@ -122,10 +122,17 @@ def _notify(args, content: str, file_path: Path | None = None) -> None:
 # Positive evidence that a SECOND source should be separated out. Anything else
 # denoises, because that is the reversible failure: an under-cleaned file is
 # still listenable, whereas SAM on single-speaker noise returns an empty stem.
+# Only sounds that are unambiguously a SEPARATE source belong here. Words that
+# equally often name the RECORDING MEDIUM -- radio, phone, tv, television --
+# were removed: "clean up this phone call recording" and "improve this radio
+# interview" are cleanup requests, and routing them to SAM sends single-speaker
+# noisy audio down the path that returns an empty stem. A genuine mixture still
+# routes correctly through _MIXTURE_PHRASES ("a man speaking over a radio"
+# matches " over "), so nothing was lost by dropping them.
 _MIXTURE_WORDS = (
     "guitar", "piano", "drum", "bass", "violin", "music", "song", "instrument",
     "dog", "bark", "bird", "engine", "traffic", "siren", "alarm", "applause",
-    "crowd", "tv", "television", "radio", "phone", "typing", "keyboard",
+    "crowd", "typing", "keyboard",
 )
 _MIXTURE_PHRASES = (" over ", " behind ", " through ", " on top of ", " against ")
 

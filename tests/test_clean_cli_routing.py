@@ -29,3 +29,34 @@ class ChooseMethodTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordingMediumIsNotAMixtureTests(unittest.TestCase):
+    """Words naming the RECORDING MEDIUM must not force SAM separation.
+
+    "radio", "phone", "tv" and "television" name how something was recorded at
+    least as often as they name a competing sound. Treating them as mixture
+    evidence sent plain cleanup requests -- "clean up this phone call recording",
+    "improve this radio interview" -- to SAM, which on single-speaker noisy audio
+    returns a target with almost no speech in it. That is the exact failure this
+    routing exists to avoid, and the design rule is that ambiguity resolves to
+    denoise.
+    """
+
+    def test_recording_medium_language_still_denoises(self):
+        for desc in [
+            "clean up this phone call recording",
+            "improve this radio interview",
+            "clean up this tv recording",
+            "remove noise from this phone message",
+            "clean up the audio from this television segment",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+    def test_a_real_mixture_still_separates_via_phrase(self):
+        """Dropping those words must not weaken genuine mixture detection."""
+        self.assertEqual(
+            clean_cli.choose_method("a man speaking over a radio"), "separate")
+        self.assertEqual(
+            clean_cli.choose_method("her voice over the television"), "separate")
