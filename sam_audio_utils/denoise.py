@@ -9,6 +9,7 @@ import numpy as np
 
 SILENCE_GATE_DBFS = -90.0
 NOISE_WINDOW_SECONDS = 3.0
+NOISE_WINDOW_FALLBACK_SECONDS = (2.0, 1.0)  # tried only if the full window fails
 MIN_NOISE_HEADROOM_DB = 6.0
 MAX_NOISE_DRIFT_DB = 10.0
 STFT_WINDOW = 2048
@@ -72,31 +73,48 @@ def estimate_noise_profile(x: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
 
     speech_median = float(np.median(db[usable]))
 
-    win_frames = max(1, int(NOISE_WINDOW_SECONDS / frame_s))
-    if usable.sum() < win_frames:
-        raise NoiseProfileError(
-            f"fewer than {NOISE_WINDOW_SECONDS}s of non-silent audio to profile")
-
-    # Slide the window; only positions containing NO silent frame are eligible,
-    # so the profile is never diluted by zeros.
-    best_start, best_level = None, None
-    for i in range(len(db) - win_frames + 1):
-        seg_sil = sil[i:i + win_frames]
-        if seg_sil.any():
+    # Try the full window first, then shorter ones. A file can have a genuine,
+    # profileable noise bed and still offer no 3s stretch of it -- conversational
+    # audio with sub-3s pauses is ordinary, and refusing it outright rejected
+    # material that denoises well. A shorter window is a noisier estimate, so it
+    # is a FALLBACK only: anything that succeeds at NOISE_WINDOW_SECONDS takes
+    # the same path it always did, and the guards below are unchanged.
+    chosen, attempts = None, []
+    for win_s in (NOISE_WINDOW_SECONDS,) + NOISE_WINDOW_FALLBACK_SECONDS:
+        win_frames = max(1, int(win_s / frame_s))
+        if usable.sum() < win_frames:
+            attempts.append(f"{win_s}s: fewer than {win_s}s of non-silent audio")
             continue
-        level = float(np.mean(db[i:i + win_frames]))
-        if best_level is None or level < best_level:
-            best_start, best_level = i, level
-    if best_start is None:
-        raise NoiseProfileError(
-            f"no {NOISE_WINDOW_SECONDS}s window free of digital silence")
 
-    headroom = speech_median - best_level
-    if headroom < MIN_NOISE_HEADROOM_DB:
+        # Slide the window; only positions containing NO silent frame are
+        # eligible, so the profile is never diluted by zeros.
+        best_start, best_level = None, None
+        for i in range(len(db) - win_frames + 1):
+            if sil[i:i + win_frames].any():
+                continue
+            level = float(np.mean(db[i:i + win_frames]))
+            if best_level is None or level < best_level:
+                best_start, best_level = i, level
+        if best_start is None:
+            attempts.append(f"{win_s}s: no window free of digital silence")
+            continue
+
+        headroom = speech_median - best_level
+        if headroom < MIN_NOISE_HEADROOM_DB:
+            attempts.append(
+                f"{win_s}s: quietest window only {headroom:.1f} dB below the "
+                f"speech median (need {MIN_NOISE_HEADROOM_DB})")
+            continue
+
+        chosen = (win_s, win_frames, best_start, best_level, headroom)
+        break
+
+    if chosen is None:
         raise NoiseProfileError(
-            f"quietest window is only {headroom:.1f} dB below the speech median "
-            f"(need {MIN_NOISE_HEADROOM_DB}); it likely contains speech, and "
-            f"subtracting it would remove the speaker")
+            "no usable noise window at any length (" + "; ".join(attempts) +
+            "); the quietest audio still looks like speech, and subtracting it "
+            "would remove the speaker")
+    window_s, win_frames, best_start, best_level, headroom = chosen
 
     a = int(best_start * frame_s * sr)
     b = int((best_start + win_frames) * frame_s * sr)
@@ -116,6 +134,10 @@ def estimate_noise_profile(x: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
     drift = (max(floors) - min(floors)) if len(floors) > 1 else None
 
     warnings: list[str] = []
+    if window_s != NOISE_WINDOW_SECONDS:
+        warnings.append(
+            f"no {NOISE_WINDOW_SECONDS}s noise window was available; profiled "
+            f"from {window_s}s instead, which is a noisier estimate")
     if drift is not None and drift > MAX_NOISE_DRIFT_DB:
         warnings.append(
             f"noise floor drifts {drift:.1f} dB across the file (>{MAX_NOISE_DRIFT_DB}); "
@@ -123,6 +145,7 @@ def estimate_noise_profile(x: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
 
     info = {
         "window_start_s": round(best_start * frame_s, 2),
+        "window_seconds": window_s,
         "window_dbfs": round(best_level, 1),
         "speech_median_dbfs": round(speech_median, 1),
         "headroom_db": round(headroom, 1),
@@ -242,6 +265,7 @@ def denoise_file(input_path, target_path, residual_path,
         "channels": int(data.shape[1]) if data.ndim > 1 else 1,
         "duration_seconds": round(len(x) / sr, 3),
         "noise_window_start_s": info["window_start_s"],
+        "noise_window_seconds": info["window_seconds"],
         "noise_window_dbfs": info["window_dbfs"],
         "headroom_db": info["headroom_db"],
         "drift_db": info["drift_db"],
