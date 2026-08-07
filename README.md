@@ -207,6 +207,35 @@ description names a source to extract *and* implies a mixture — a named second
 else — "clean this up", "remove background noise", "a person speaking", an empty
 description — denoises.
 
+### Name the sound you want to KEEP, not the one you want gone
+
+SAM extracts the sound you *describe*; it does not follow instructions. Ask it to
+"remove the barking dog" and it returns **the dog** as `target.wav` and puts the voice in
+`residual.wav` — and it reports success, because nothing in that description mentions
+speech for the speech-band guard to check. So removal phrasing ("remove", "get rid of",
+"take out", "suppress", "filter out", ...) routes to **denoise** instead. The dog will
+still be there, but the voice survives, and under-cleaning is the recoverable mistake.
+
+To actually extract a source, name it: `"the guitar"`, not `"remove the guitar"`.
+
+### Known routing limitations
+
+Routing is keyword matching over a free-text description, so it has edges. Set `method`
+explicitly in `job.json` whenever you know which one you want — it always beats inference.
+
+- **A mixture word that is the topic of the speech misroutes to `separate`.** "A lecture
+  about classical music history" and "clean up this interview about traffic policy" both
+  name a source that is being *talked about*, not heard. Distinguishing the two needs more
+  than keyword matching.
+- **Mixture words match whole words plus a plural `s` only.** "Two guitars" counts;
+  a bare "barking outside" or "drumming in the next room" does not, and will denoise.
+  This is deliberate — matching `-ed`/`-ing` would read "alarm" out of "alarming" and
+  "crowd" out of "crowded", sending ordinary cleanup requests to SAM.
+- **Device words need a playing cue.** "Radio", "phone", "tv" and "television" name the
+  recording medium as often as a second source, so they only imply a mixture alongside a
+  cue that the device is audibly playing ("a tv **playing** in the background"). "Clean up
+  this phone call recording" denoises.
+
 ### `job.json` keys
 
 No new CLI flags were added — the bridge, Cortex and the sp4 wrapper send exactly what
