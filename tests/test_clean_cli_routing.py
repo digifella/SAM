@@ -27,10 +27,6 @@ class ChooseMethodTests(unittest.TestCase):
             clean_cli.choose_method("anything", "magic")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RecordingMediumIsNotAMixtureTests(unittest.TestCase):
     """Words naming the RECORDING MEDIUM must not force SAM separation.
 
@@ -60,3 +56,44 @@ class RecordingMediumIsNotAMixtureTests(unittest.TestCase):
             clean_cli.choose_method("a man speaking over a radio"), "separate")
         self.assertEqual(
             clean_cli.choose_method("her voice over the television"), "separate")
+
+
+class MixtureWordsMatchOnWordBoundariesTests(unittest.TestCase):
+    """A mixture word buried inside a longer word is not evidence of a mixture.
+
+    Substring matching read "engine" out of "engineer", "bass" out of "embassy"
+    and "music" out of "musician", so ordinary cleanup requests were routed to
+    SAM. Every case below was measured misrouting to "separate" before word
+    boundaries were introduced.
+    """
+
+    def test_embedded_words_do_not_trigger_separation(self):
+        for desc in [
+            "an interview with an engineer",
+            "clean up this recording from the embassy",
+            "a musician talking about her career",
+            "a crowded room, one speaker",
+            "the speaker sounds alarmed",
+            "clean up this dogged rambling monologue",
+            "embark on the interview",
+            "the professor discusses birdsong",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+    def test_plurals_still_count_as_a_mixture(self):
+        """Word boundaries must not lose the plural forms."""
+        for desc in ["two guitars playing", "the drums", "birds chirping",
+                     "engines revving"]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "separate")
+
+    def test_whole_words_still_separate(self):
+        """The plan's mandated separation cases are unaffected."""
+        for desc in ["the guitar", "a dog barking", "the voice over the music"]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "separate")
+
+
+if __name__ == "__main__":
+    unittest.main()

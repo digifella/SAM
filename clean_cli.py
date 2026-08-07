@@ -12,6 +12,7 @@ import datetime
 import fcntl
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -136,6 +137,19 @@ _MIXTURE_WORDS = (
 )
 _MIXTURE_PHRASES = (" over ", " behind ", " through ", " on top of ", " against ")
 
+# Matched on WORD BOUNDARIES, not as bare substrings. Substring matching read
+# "engine" out of "engineer", "bass" out of "embassy" and "music" out of
+# "musician", so "an interview with an engineer" was routed to SAM -- the same
+# misroute as the recording-medium words above, and in the direction that costs
+# the most: a false "separate" returns a near-empty stem, whereas a false
+# "denoise" merely under-cleans a file that is still listenable.
+# A trailing "s" is allowed so plurals ("two guitars") still count. Other
+# inflections deliberately do NOT match: allowing "-ed"/"-ing" would read
+# "alarm" out of "alarming" and "crowd" out of "crowded", reintroducing the bug.
+# The cost is that a bare "barking outside" now denoises; that is the safe
+# direction, and an explicit method="separate" overrides it.
+_MIXTURE_RE = re.compile(r"\b(" + "|".join(_MIXTURE_WORDS) + r")s?\b")
+
 
 def choose_method(description: str, explicit: str = "auto") -> str:
     """Pick the processing method. Explicit always beats inference."""
@@ -145,7 +159,7 @@ def choose_method(description: str, explicit: str = "auto") -> str:
         raise ValueError(
             f"unknown method {explicit!r}; expected auto, denoise or separate")
     text = (description or "").lower()
-    if any(w in text for w in _MIXTURE_WORDS):
+    if _MIXTURE_RE.search(text):
         return "separate"
     if any(p in f" {text} " for p in _MIXTURE_PHRASES):
         return "separate"
