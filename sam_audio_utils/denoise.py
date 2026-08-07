@@ -103,17 +103,20 @@ def estimate_noise_profile(x: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
     _, _, Z = _stft(x[a:b], fs=sr, nperseg=STFT_WINDOW, noverlap=STFT_OVERLAP)
     profile = np.abs(Z).mean(axis=1)
 
-    # Drift: spread of the quiet floor across 60s blocks, non-silent frames only.
+    # Drift: spread of the quiet floor across 60s blocks, non-silent frames
+    # only. Fewer than two blocks (files under ~120s) means drift could not
+    # actually be measured -- report that honestly as None/null rather than
+    # a fabricated 0.0 indistinguishable from a genuinely flat file.
     block = max(1, int(60.0 / frame_s))
     floors = []
     for s in range(0, len(db), block):
         seg = db[s:s + block][usable[s:s + block]]
         if len(seg):
             floors.append(float(np.percentile(seg, 10)))
-    drift = (max(floors) - min(floors)) if len(floors) > 1 else 0.0
+    drift = (max(floors) - min(floors)) if len(floors) > 1 else None
 
     warnings: list[str] = []
-    if drift > MAX_NOISE_DRIFT_DB:
+    if drift is not None and drift > MAX_NOISE_DRIFT_DB:
         warnings.append(
             f"noise floor drifts {drift:.1f} dB across the file (>{MAX_NOISE_DRIFT_DB}); "
             f"one global profile may not fit all of it")
@@ -123,7 +126,7 @@ def estimate_noise_profile(x: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
         "window_dbfs": round(best_level, 1),
         "speech_median_dbfs": round(speech_median, 1),
         "headroom_db": round(headroom, 1),
-        "drift_db": round(drift, 1),
+        "drift_db": round(drift, 1) if drift is not None else None,
         "warnings": warnings,
     }
     return profile, info
@@ -216,6 +219,13 @@ def denoise_file(input_path, target_path, residual_path,
     if tail.size and frame_rms_dbfs(tail, sr, frame_s)[0] <= SILENCE_GATE_DBFS:
         target[tail_start:] = 0.0
 
+    # Clamp to the representable float range before computing the residual.
+    # spectral_subtract can overshoot slightly (e.g. 1.0057 on a real file);
+    # sf.write's PCM_16 clips that on write regardless, and residual = x -
+    # target computed from the UNCLAMPED value no longer matched what got
+    # written, so target.wav + residual.wav silently stopped reconstructing
+    # the input -- exactly the check residual.wav exists to make possible.
+    target = np.clip(target, -1.0, 1.0)
     residual = x - target
 
     report(90, "writing outputs")
@@ -226,6 +236,10 @@ def denoise_file(input_path, target_path, residual_path,
         "method": "spectral_subtraction",
         "strength": strength,
         "sample_rate": int(sr),
+        # Input channel count, before the downmix to mono -- target.wav and
+        # residual.wav are always mono, so this is the only record that a
+        # channel was discarded.
+        "channels": int(data.shape[1]) if data.ndim > 1 else 1,
         "duration_seconds": round(len(x) / sr, 3),
         "noise_window_start_s": info["window_start_s"],
         "noise_window_dbfs": info["window_dbfs"],

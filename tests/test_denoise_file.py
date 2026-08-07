@@ -35,6 +35,34 @@ class DenoiseFileTests(unittest.TestCase):
                 self.assertEqual(len(data), len(sf.read(src)[0]))
             self.assertEqual(meta["method"], "spectral_subtraction")
             self.assertEqual(meta["sample_rate"], SR)
+            self.assertEqual(meta["channels"], 1, "the fixture input is mono")
+
+    def test_stereo_input_is_downmixed_and_channel_count_recorded(self):
+        """target.wav/residual.wav are always mono -- a stereo input silently
+        loses a channel. Nothing in metadata.json said so (no `channels` key
+        at all), unlike the SAM path which records one. This is the only
+        record a caller has that a channel was discarded, so it must carry
+        the INPUT count, not the (always-1) output count.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rng = np.random.default_rng(0)
+            t = np.arange(int(5 * SR)) / SR
+            left = 0.2 * np.sin(2 * np.pi * 600 * t) + 0.01 * rng.standard_normal(len(t))
+            right = 0.2 * np.sin(2 * np.pi * 600 * t) + 0.01 * rng.standard_normal(len(t))
+            noise = 0.01 * rng.standard_normal((int(4 * SR), 2))
+            stereo = np.concatenate([np.stack([left, right], axis=1), noise]).astype(np.float32)
+            src = td / "in.wav"
+            sf.write(src, stereo, SR)
+            self.assertEqual(sf.info(src).channels, 2, "fixture must actually be stereo")
+
+            meta = d.denoise_file(src, td / "t.wav", td / "r.wav")
+            self.assertEqual(meta["channels"], 2, "must record the INPUT channel count")
+
+            t_out, _ = sf.read(td / "t.wav")
+            r_out, _ = sf.read(td / "r.wav")
+            self.assertEqual(t_out.ndim, 1, "target.wav must be downmixed to mono")
+            self.assertEqual(r_out.ndim, 1, "residual.wav must be downmixed to mono")
 
     def test_true_silence_passes_through_untouched(self):
         with tempfile.TemporaryDirectory() as td:
@@ -56,6 +84,41 @@ class DenoiseFileTests(unittest.TestCase):
             t = sf.read(td / "t.wav")[0].astype(np.float64)
             r = sf.read(td / "r.wav")[0].astype(np.float64)
             self.assertLess(float(np.abs((t + r) - x).max()), 1e-3)
+
+    def test_reconstructs_the_input_when_the_target_would_clip(self):
+        """The synthetic fixture above peaks at 0.2 and never clips, so it
+        can't catch this: a real file (Fionnuala_raw.wav) has a target that
+        overshoots to 1.0058 -- spectral subtraction's overlap-add can push
+        the reconstructed waveform slightly past the input peak even though
+        gain <= 1.0 everywhere. Writing PCM_16 clips that on write regardless,
+        but residual computed from the UNCLAMPED target no longer matched what
+        was written, so target+residual silently stopped summing to the input
+        -- the exact diagnostic residual.wav exists to provide.
+
+        This fixture reproduces the same shape with a hard-clipped near-full-
+        scale tone sandwiched between two noise regions (input itself stays
+        within [-1, 1], verified below): the raw target peaks at 1.0043, 50
+        samples over 1.0, close to the real file's 1.0058.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rng = np.random.default_rng(1)
+            t = np.arange(int(5 * SR)) / SR
+            x = np.clip(3.0 * np.sin(2 * np.pi * 400 * t), -1.0, 1.0)
+            x = x + 0.02 * rng.standard_normal(len(t))
+            x = np.clip(x, -1.0, 1.0)
+            noise_before = 0.02 * rng.standard_normal(int(3 * SR))
+            noise_after = 0.02 * rng.standard_normal(int(0.5 * SR))
+            full = np.concatenate([noise_before, x, noise_after]).astype(np.float32)
+            self.assertLessEqual(np.abs(full).max(), 1.0, "fixture input must not itself clip")
+
+            src = td / "in.wav"
+            sf.write(src, full, SR)
+            d.denoise_file(src, td / "t.wav", td / "r.wav")
+            xin = sf.read(src)[0].astype(np.float64)
+            t_out = sf.read(td / "t.wav")[0].astype(np.float64)
+            r_out = sf.read(td / "r.wav")[0].astype(np.float64)
+            self.assertLess(float(np.abs((t_out + r_out) - xin).max()), 1e-3)
 
     def test_progress_callback_is_called(self):
         seen = []
