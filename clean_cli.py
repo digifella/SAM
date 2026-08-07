@@ -299,6 +299,9 @@ def main(argv=None) -> int:
         emit(100, "complete", "done")
         return 0
     except Exception as exc:
+        # The success path removes this; on the error path it was being left
+        # behind, and a failure after the first sf.write strands a full-size WAV.
+        shutil.rmtree(out_dir / "denoise_work", ignore_errors=True)
         write_status(out_dir, "error", error=str(exc), finished_at=_now())
         _notify(args, f"❌ Audio cleanup of `{input_path.name}` failed: {exc}")
         return 1

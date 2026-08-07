@@ -157,6 +157,31 @@ class CleanCliCoreTests(unittest.TestCase):
                 names = set(zf.namelist())
             self.assertEqual(names, {"target.wav", "residual.wav", "metadata.json"})
 
+    def test_denoise_failure_does_not_strand_the_work_dir(self):
+        # The success path removes denoise_work/; the error path was leaving it.
+        # A failure after the first sf.write would strand a full-size WAV, so the
+        # cleanup has to happen wherever the job ends, not only where it succeeds.
+        # Unreadable input makes denoise_file raise inside the denoise branch.
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            inp = td / "in.wav"
+            inp.write_bytes(b"RIFFfake")
+            jj = td / "job.json"
+            jj.write_text(json.dumps({"description": "clean this up", "method": "denoise"}))
+            out = td / "out"
+            argv = ["--input", str(inp), "--job-json", str(jj), "--out-dir", str(out),
+                    "--gpu-lock-timeout", "5"]
+            with patch.object(clean_cli, "GPU_LOCK_PATH", td / "gpu_test.lock"), \
+                 patch.object(clean_cli, "handle"):
+                rc = clean_cli.main(argv)
+            self.assertEqual(rc, 1)
+            status = json.loads((out / "status.json").read_text())
+            self.assertEqual(status["state"], "error")
+            self.assertFalse((out / "denoise_work").exists(),
+                             "denoise_work/ must not survive a failed job")
+            self.assertTrue((out / "status.json").exists(),
+                            "cleanup must not take out_dir itself with it")
+
 
 @unittest.skipUnless(_shutil.which("ffmpeg"), "ffmpeg not on PATH")
 class OpusEncodeTests(unittest.TestCase):
