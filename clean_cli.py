@@ -127,9 +127,9 @@ def _notify(args, content: str, file_path: Path | None = None) -> None:
 # equally often name the RECORDING MEDIUM -- radio, phone, tv, television --
 # were removed: "clean up this phone call recording" and "improve this radio
 # interview" are cleanup requests, and routing them to SAM sends single-speaker
-# noisy audio down the path that returns an empty stem. A genuine mixture still
-# routes correctly through _MIXTURE_PHRASES ("a man speaking over a radio"
-# matches " over "), so nothing was lost by dropping them.
+# noisy audio down the path that returns an empty stem. They are still honoured
+# via _MEDIUM_WORDS below, but only alongside evidence the device is audibly
+# playing -- dropping them outright lost "a tv playing in the background".
 _MIXTURE_WORDS = (
     "guitar", "piano", "drum", "bass", "violin", "music", "song", "instrument",
     "dog", "bark", "bird", "engine", "traffic", "siren", "alarm", "applause",
@@ -150,6 +150,28 @@ _MIXTURE_PHRASES = (" over ", " behind ", " through ", " on top of ", " against 
 # direction, and an explicit method="separate" overrides it.
 _MIXTURE_RE = re.compile(r"\b(" + "|".join(_MIXTURE_WORDS) + r")s?\b")
 
+# A device that is EITHER the recording medium or an audible second source.
+# On its own it means nothing ("this phone call recording"); paired with a cue
+# that it is actually playing, it is a genuine mixture.
+_MEDIUM_WORDS = ("tv", "television", "radio", "phone", "stereo")
+_MEDIUM_RE = re.compile(r"\b(" + "|".join(_MEDIUM_WORDS) + r")s?\b")
+_BACKGROUND_CUES = ("background", "playing", "blaring", "is on", "next room",
+                    "in another room")
+
+# SAM extracts the sound you DESCRIBE -- it does not follow instructions. So
+# "remove the barking dog" makes it return the DOG as target.wav and push the
+# voice into residual.wav, then report success, with the speech-band guard
+# disarmed because the description never mentions speech. That is this project's
+# founding failure reachable through ordinary English, so removal phrasing routes
+# to denoise: it under-cleans, which is the reversible direction.
+# To extract a source, NAME it ("the guitar") rather than asking to remove it.
+_REMOVAL_CUES = (
+    "remove", "delete", "strip", "suppress", "eliminate", "mute", "silence",
+    "take out", "cut out", "get rid of", "filter out", "without the",
+    "minus the", "reduce", "kill", "drown out", "clean out", "take away",
+    "less of",
+)
+
 
 def choose_method(description: str, explicit: str = "auto") -> str:
     """Pick the processing method. Explicit always beats inference."""
@@ -159,9 +181,14 @@ def choose_method(description: str, explicit: str = "auto") -> str:
         raise ValueError(
             f"unknown method {explicit!r}; expected auto, denoise or separate")
     text = (description or "").lower()
+    # Checked FIRST: a removal request names the sound to discard, not to keep.
+    if any(r in text for r in _REMOVAL_CUES):
+        return "denoise"
     if _MIXTURE_RE.search(text):
         return "separate"
     if any(p in f" {text} " for p in _MIXTURE_PHRASES):
+        return "separate"
+    if _MEDIUM_RE.search(text) and any(c in text for c in _BACKGROUND_CUES):
         return "separate"
     return "denoise"
 

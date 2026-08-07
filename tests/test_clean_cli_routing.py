@@ -95,5 +95,84 @@ class MixtureWordsMatchOnWordBoundariesTests(unittest.TestCase):
                 self.assertEqual(clean_cli.choose_method(desc), "separate")
 
 
+class RemovalPhrasingMustNotReachSamTests(unittest.TestCase):
+    """"Remove the X" names the sound to DISCARD, so SAM must not see it.
+
+    SAM extracts the sound you describe. Given "remove the barking dog" it
+    returns the DOG as target.wav and pushes the voice into residual.wav, then
+    reports success -- and the speech-band guard never arms, because the
+    description never mentions speech. That is this project's founding failure,
+    reachable through ordinary English. Removal phrasing therefore denoises,
+    which merely under-cleans: the reversible direction.
+    """
+
+    def test_removal_phrasing_routes_to_denoise(self):
+        for desc in [
+            "remove the barking dog",
+            "take out the traffic noise",
+            "cut out the keyboard typing",
+            "remove the engine noise from this recording",
+            "suppress the crowd noise",
+            "there is an alarm going off in the background, please remove it",
+            "get rid of the music",
+            "filter out the siren",
+            "eliminate the applause",
+            "strip out the piano",
+            "mute the typing",
+            "delete the dog barking",
+            "remove the tv in the background",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+    def test_naming_a_source_to_keep_still_separates(self):
+        """The supported way to extract a source is to NAME it, not remove it."""
+        for desc in ["the guitar", "a dog barking", "the voice over the music"]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "separate")
+
+
+class BackgroundDeviceIsAMixtureTests(unittest.TestCase):
+    """A device word counts only alongside evidence it is audibly playing.
+
+    Dropping "radio"/"phone"/"tv"/"television" outright to stop them naming the
+    recording medium also lost a real class of mixture -- "a tv playing in the
+    background" -- because _MIXTURE_PHRASES does not cover "in the background".
+    Requiring a playing cue restores those without reopening the misroute.
+    """
+
+    def test_device_plus_playing_cue_separates(self):
+        for desc in [
+            "there is a tv playing in the background while she talks",
+            "someone is talking on the phone in the background",
+            "a radio is playing in the background of this call",
+            "the television is on in the background",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "separate")
+
+    def test_device_without_a_cue_still_denoises(self):
+        """The recording-medium reading must stay the default."""
+        for desc in [
+            "clean up this phone call recording",
+            "improve this radio interview",
+            "clean up this tv recording",
+            "clean up the audio from this television segment",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+    def test_background_noise_is_not_a_second_source(self):
+        """Hiss and hum in "the background" are noise, not a device."""
+        for desc in [
+            "remove the background noise",
+            "remove the noise in the background",
+            "there is a hiss in the background",
+            "reduce the background hum",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+
 if __name__ == "__main__":
     unittest.main()
