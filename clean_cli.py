@@ -169,7 +169,8 @@ _REMOVAL_CUES = (
     "remove", "delete", "strip", "suppress", "eliminate", "mute", "silence",
     "take out", "cut out", "get rid of", "filter out", "without the",
     "minus the", "reduce", "kill", "drown out", "clean out", "take away",
-    "less of", "strip out",
+    "less of",
+    "strip out",  # Must be listed explicitly for exact-phrase extraction; "strip" alone misses two-word variant. Routing is neutral: "strip out" ⊃ "strip" so choose_method's membership test is unchanged.
 )
 
 # Leading determiners left behind once the cue is gone: "remove the guitar"
@@ -192,7 +193,7 @@ def strip_removal_cue(description: str) -> str:
     if not text:
         return ""
     low = text.lower()
-    # Longest cue first: "take out" must win over any shorter cue it contains.
+    # Longest cue first: "strip out" must win over the shorter "strip" cue it contains.
     for cue in sorted(_REMOVAL_CUES, key=len, reverse=True):
         i = low.find(cue)
         if i == -1:
