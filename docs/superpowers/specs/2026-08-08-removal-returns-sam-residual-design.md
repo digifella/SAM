@@ -218,3 +218,43 @@ and what was acted on.
 - **The corpus that validated `40edf52` shrinks.** 13 descriptions move from must-denoise
   to must-remove, so the must-denoise corpus loses coverage. Retain all 13 as explicit
   must-remove assertions so the total is unchanged and the boundary stays pinned.
+
+---
+
+## Validation record (2026-08-08, added at merge)
+
+**Real-audio gate: PASSED.** `Original_Audio.wav` — a boy talking with very loud
+cicadas, 28.5s — was run through the route with explicit `method: "remove"`. Paul
+listened to the deliverable: *"did a great job."* The cicadas measured **-16.6 dB**
+against the input in the 4-12kHz band, i.e. genuinely removed.
+
+**The mirror guard produced a false positive on that run,** and the calibration is
+empirical because of it. It fired at removed 53.7% vs kept 48.8% speech-band energy —
+a 4.9-point gap — on output a human judged good. `MIRROR_SPEECH_MARGIN = 0.20` was
+chosen from that measurement: 4x above the ear-verified false positive, 3x below the
+founding failure's 58.5-point gap. **Do not retune it without a new listening test.**
+
+**`target + residual` does NOT reconstruct the input on the SAM path**, now measured
+rather than assumed: `corr(input, target+residual) = 0.3183`, reconstruction error
+-20.7 dBFS against a -21.6 dBFS input — the error is louder than the signal. Both
+stems are codec resynthesis, so phase differs and sample-level correlation understates
+perceptual fidelity; the audio sounded good regardless. This is why the "benign
+under-clean" argument above is labelled an empirical claim, not algebra.
+
+### Parked, deliberately — real misroutes not fixed
+
+- `"the music is drowning out her voice"` -> `remove`, prompt `"music is her voice"`
+- `"the guitar cut out during the solo"` -> `remove`, prompt `"guitar during the solo"`
+
+The progressive shares its surface form with the imperative gerund, so closing these
+needs a copula-demotion added to the loose tier *and* excluded from the precise tier in
+one change — unverified against both corpora. One fix wave already introduced a
+Critical while closing another; an unverified grammatical change is how that recurs.
+Neither is a clean inversion (both yield garbled prompts). Marked `KNOWN GAP` in
+`clean_cli.py`.
+
+### Reachability limit
+
+`cicada`, `insect`, `hum`, `rain`, `wind`, `chatter` are not in `_MIXTURE_WORDS`, so
+`"remove the cicadas"` routes to **denoise**. The feature is narrower in practice than
+the README's phrasing implies. Widening the vocabulary is a separate decision.
