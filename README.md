@@ -180,11 +180,15 @@ The bridge never blocks on the job; the caller may poll `GET /audio-status?id=<j
   `nemoclaw_ops/docs/2026-08-03-kb-bridge-audio-clean-endpoints.md`. The bridge
   script itself is not in git; a backup lives at `~/kb-query-server.py.bak-20260803`.
 
-**The description is what to EXTRACT, not what to remove.** SAM pulls the described
-sound into `target.wav` and everything else into `residual.wav`, so "remove the
-background noise" must become `"a person speaking"`. Passing `"background noise"`
-returns the noise. The Hermes prompt registration encodes this translation and
-defaults to `"a person speaking"`.
+**The description here was historically framed as what to EXTRACT, not what to
+remove**, and the `kb-audio-clean` argument above is still written as
+`"<sound to KEEP>"`. That framing is no longer the whole picture — `clean_cli.py`
+itself now also supports removal phrasing directly; see "Removing a sound vs.
+extracting one" below for the current contract. Whether removal phrasing sent to
+Hermes survives intact through to `clean_cli.py`, or is still translated to a
+"sound to keep" phrase before it arrives, is **unverified from this repo** — that
+translation lives on sp4, outside this codebase, and its documented default is
+`"a person speaking"`.
 
 Discord's attachment cap (25MB for non-Nitro) bounds the input: roughly 2 minutes of
 48kHz mono WAV, or ~25 minutes of 128kbps MP3. Results come back as Opus with a
