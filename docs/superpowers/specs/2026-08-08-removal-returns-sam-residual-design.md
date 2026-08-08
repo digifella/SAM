@@ -127,9 +127,17 @@ if remove_mode:
     target_path, residual_path = residual_path, target_path
 ```
 
-Existing callers are unaffected by the default. The documented invariant
-`residual.wav = input − target.wav` still holds, since SAM's target is the input minus
-SAM's residual.
+Existing callers are unaffected by the default.
+
+**`residual.wav = input − target.wav` is NOT an invariant on this path.** It is exact on
+the denoiser (`sam_audio_utils/denoise.py` literally computes `residual = x - target`),
+but SAM does not subtract anything: `run_sam_interactive.py:411-416` unbatches
+`wavs[:, 0]` and `wavs[:, 1]` as two *independently generated* codec outputs at the same
+rerank index. Both stems are resynthesized, so their sum is not guaranteed to reconstruct
+the input, and how close it comes has not been measured here. The swap is still correct —
+`residual.wav` is the stem holding everything SAM did not attribute to the named source —
+but the benign-failure argument above ("≈ the whole input") is an empirical claim about a
+generative model, not algebra.
 
 ## Component 4 — two-sided guard
 
@@ -166,9 +174,10 @@ and what was acted on.
 - **Routing:** replace the inverted class. Re-run the existing 42-must-denoise corpus
   **unchanged** — that no removal-without-a-source leaked into `remove` is the regression
   that matters most.
-- **`strip_removal_cue()`:** unit test per cue in `_REMOVAL_CUES`.
-- **Swap:** synthetic two-tone mixture; assert `target.wav` is the tone *not* named and
-  that `target + residual` reconstructs the input.
+- **`strip_removal_cue()`:** unit test per surface form the cue pattern matches.
+- **Swap:** synthetic two-tone mixture; assert `target.wav` is the tone *not* named.
+  Do **not** assert that `target + residual` reconstructs the input — see Component 3;
+  that holds on the denoiser, not on SAM.
 - **Guard:** both new warnings fire on constructed stems; a normal `separate` job is
   unaffected.
 - **Real audio:** `Fionnuala_raw.wav` is single-speaker and proves nothing here. A real

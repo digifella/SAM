@@ -227,6 +227,13 @@ asking SAM to extract it returns a near-empty stem.
 If SAM cannot find the sound you asked to remove, the result is approximately your
 original audio: nothing was removed, but nothing was lost either.
 
+**The two SAM stems do not sum back to the input.** SAM generates `target.wav` and
+`residual.wav` independently — `run_sam_interactive.py` decodes them as two separate codec
+outputs, it does not subtract one from the other — so `residual.wav` is a *resynthesis* of
+everything not attributed to the named source, not an arithmetic complement, and how
+closely the pair reconstructs the input has not been measured. Only the denoise path
+guarantees `residual = input − target` exactly.
+
 ### Known routing limitations
 
 Routing is keyword matching over a free-text description, so it has edges. Set `method`
@@ -248,6 +255,13 @@ explicitly in `job.json` whenever you know which one you want — it always beat
   part about traffic" names a subject being discussed, not a sound, and will route to
   `remove`. The two-sided guard should catch the resulting voice loss and warn, but set
   `method` explicitly when you know.
+- **Removal cues match whole words, and ambiguous inflections denoise.** The imperative
+  and the gerund route to `remove` ("mute the typing", "muting the typing"), but the past
+  and third-person forms do not — "the piano is muted" describes a sound rather than
+  asking for the piano to go, and no keyword rule can tell that from "she muted the
+  piano". Those, and "stripped"/"stripping" (indistinguishable from "a stripped-back drum
+  track"), denoise. Denoise, not `separate`: `separate` would hand back only the sound you
+  asked to lose, which is the one outcome a removal request must never produce.
 
 ### `job.json` keys
 
@@ -283,9 +297,12 @@ zero rather than left to be smeared by STFT overlap-add.
 
 ### Checking nothing was eaten
 
-`residual.wav` (`= input - target`) is the diagnostic: listen to it, and if you can hear
-the speaker, the settings were too aggressive. That is exactly how the original SAM
-failure was found — the residual had the voice in it, not the target.
+On the denoise path `residual.wav` is exactly `input - target` (`denoise.py` computes it
+by subtraction), which makes it the diagnostic: listen to it, and if you can hear the
+speaker, the settings were too aggressive. That is exactly how the original SAM failure
+was found — the residual had the voice in it, not the target. On the SAM path the same
+listening test still works, but the arithmetic does not: those two stems are generated
+separately and do not provably sum back to the input.
 
 On the real test file the automated result correlates **0.9983** with Paul's hand-tuned
 WavePad output (the oracle), removes **19.3 dB** of noise floor versus WavePad's 18.8 dB,

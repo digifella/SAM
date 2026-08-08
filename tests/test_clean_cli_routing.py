@@ -159,6 +159,117 @@ class RemovalPhrasingReturnsTheResidualTests(unittest.TestCase):
                 self.assertEqual(clean_cli.choose_method(desc), "separate")
 
 
+class RemovalCuesMatchOnWordBoundariesTests(unittest.TestCase):
+    """A removal cue buried inside a longer word is not a removal request.
+
+    Bare substring matching read "kill" out of "killer", "mute" out of
+    "commuter", "strip" out of "stripped-back" and "less of" out of "unless of".
+    On this route that is not a misroute but an INVERSION: the description is cut
+    at the false match, so "the killer bass line" reached SAM as "er bass line"
+    and the user was handed everything EXCEPT the sound they named, silently,
+    reported as success. Every case below was measured routing to "remove".
+    """
+
+    def test_embedded_cues_do_not_route_to_remove(self):
+        for desc, expected in [
+            # No removal intent at all -- a named source, so extract it.
+            ("the killer bass line", "separate"),
+            ("a skilled musician playing guitar", "separate"),
+            ("commuter traffic in the background", "separate"),
+            ("unless of course the guitar is too loud", "separate"),
+            # A real but ambiguous inflection: denoise, never separate.
+            ("a guitar with a stripped-back drum track", "denoise"),
+            ("the piano is muted", "denoise"),
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), expected)
+
+    def test_no_embedded_cue_is_cut_out_of_the_prompt(self):
+        """Routing and prompt derivation must agree on what the cue was.
+
+        Both now run the same regex, so a description with no real cue survives
+        the strip intact instead of losing a fragment of a longer word.
+        """
+        for desc, expected in [
+            ("the killer bass line", "killer bass line"),
+            ("a skilled musician playing guitar", "skilled musician playing guitar"),
+            ("commuter traffic in the background", "commuter traffic in the background"),
+            ("a guitar with a stripped-back drum track",
+             "guitar with a stripped-back drum track"),
+            ("the piano is muted", "piano is muted"),
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.strip_removal_cue(desc), expected)
+
+
+class RemovalGerundsStillRouteToRemoveTests(unittest.TestCase):
+    """"removing the guitar" asks for a removal, not for the guitar.
+
+    These matched NO cue under bare-substring matching, because an e-final verb
+    drops the e in its gerund -- "remove" + "ing" is not "removing". They fell
+    through to the mixture check and routed to `separate`, which returns the
+    named sound ALONE: everything the user wanted to keep, discarded. That is
+    this project's founding failure, reached through ordinary English.
+    """
+
+    def test_gerund_and_inflected_forms_route_to_remove(self):
+        cases = {
+            # e-final stems: the gerund drops the e.
+            "removing the guitar": "guitar",
+            "muting the typing": "typing",
+            "deleting the dog barking": "dog barking",
+            "eliminating the applause": "applause",
+            "reducing the traffic noise": "traffic noise",
+            "silencing the alarm": "alarm",
+            # Plain stems: the suffix just appends.
+            "suppressing the crowd noise": "crowd noise",
+            "killing the engine noise": "engine noise",
+            # Phrasal cues inflect on the FIRST word, never the whole phrase.
+            "taking out the traffic noise": "traffic noise",
+            "took out the drums": "drums",
+            "getting rid of the music": "music",
+            "cutting out the keyboard typing": "keyboard typing",
+            "filtering out the siren": "siren",
+            "drowning out the applause": "applause",
+            "cleaning out the crowd noise": "crowd noise",
+            "stripping out the piano": "piano",
+            "taking away the drums": "drums",
+        }
+        for desc, prompt in cases.items():
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "remove")
+                self.assertEqual(clean_cli.strip_removal_cue(desc), prompt)
+
+
+class AmbiguousRemovalPhrasingNeverSeparatesTests(unittest.TestCase):
+    """Phrasing that MIGHT be a removal must never reach `separate`.
+
+    This is the trap in tightening the cue pattern. `separate` returns the named
+    sound alone -- the exact inverse of a removal request -- so a genuine removal
+    phrasing the precise pattern misses would fall through to the mixture check
+    and produce the worst possible output. The loose tier catches those forms and
+    forces denoise instead: it under-cleans, which is recoverable, and it is the
+    same reversible direction the whole routing rule is built on.
+
+    The forms below are ambiguous by construction. "stripping the guitar" is a
+    removal; "a stripped-back drum track" is a description of a mix; no regex can
+    tell them apart. Declining to derive a prompt from them is correct.
+    """
+
+    def test_ambiguous_inflections_denoise_rather_than_separate(self):
+        for desc in [
+            "stripping the guitar",
+            "a guitar with a stripped-back drum track",
+            "she muted the guitar",
+            "the piano is muted",
+            "the traffic noise was reduced",
+            "the applause was eliminated",
+            "he kills the drums in the second verse",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+
 class BackgroundDeviceIsAMixtureTests(unittest.TestCase):
     """A device word counts only alongside evidence it is audibly playing.
 

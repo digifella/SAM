@@ -26,12 +26,51 @@ class StripRemovalCueTests(unittest.TestCase):
             with self.subTest(desc=desc):
                 self.assertEqual(clean_cli.strip_removal_cue(desc), expected)
 
-    def test_every_cue_is_strippable(self):
+    # Every surface form the precise cue pattern matches. Enumerated rather than
+    # derived so a reader can see exactly what routes to "remove" -- the pattern
+    # is built from stems ("remov" + "e|ing") and cannot be read off as literals.
+    ALL_CUE_FORMS = [
+        "remove", "removing", "delete", "deleting", "eliminate", "eliminating",
+        "mute", "muting", "silence", "silencing", "reduce", "reducing",
+        "suppress", "suppressing", "kill", "killing", "strip",
+        "take out", "takes out", "taking out", "took out",
+        "take away", "takes away", "taking away", "took away",
+        "cut out", "cuts out", "cutting out",
+        "strip out", "strips out", "stripped out", "stripping out",
+        "get rid of", "gets rid of", "getting rid of", "got rid of",
+        "filter out", "filters out", "filtered out", "filtering out",
+        "drown out", "drowns out", "drowned out", "drowning out",
+        "clean out", "cleans out", "cleaned out", "cleaning out",
+        "without the", "minus the", "less of",
+    ]
+
+    def test_every_cue_form_is_strippable(self):
         """No cue may survive into the prompt -- that is the whole point."""
-        for cue in clean_cli._REMOVAL_CUES:
+        for cue in self.ALL_CUE_FORMS:
             desc = f"{cue} the guitar"
             with self.subTest(cue=cue):
                 self.assertEqual(clean_cli.strip_removal_cue(desc), "guitar")
+
+    def test_every_cue_form_also_routes_to_remove(self):
+        """Routing and stripping run the same regex; prove they agree.
+
+        If a form strips cleanly but does not route, the prompt is never
+        derived; if it routes but does not strip, SAM is handed the cue itself.
+        """
+        for cue in self.ALL_CUE_FORMS:
+            desc = f"{cue} the guitar"
+            with self.subTest(cue=cue):
+                self.assertEqual(clean_cli.choose_method(desc), "remove")
+
+    def test_a_phrasal_cue_beats_the_simple_cue_inside_it(self):
+        """Alternation order is load-bearing: "strip out" must win over "strip".
+
+        Matching only "strip" leaves the particle behind and sends SAM the
+        prompt "out the piano".
+        """
+        self.assertEqual(clean_cli.strip_removal_cue("strip out the piano"), "piano")
+        self.assertEqual(
+            clean_cli.strip_removal_cue("stripping out the piano"), "piano")
 
     def test_mid_sentence_cue_leaves_the_source_named(self):
         """Awkward but accepted: the remainder is not re-flowed as English.

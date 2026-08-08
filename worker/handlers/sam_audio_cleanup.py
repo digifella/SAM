@@ -275,15 +275,16 @@ def _separation_sanity_warning(target_path: Path, residual_path: Path, descripti
                 f"treated the voice as '{description}' and discarded it. Check "
                 f"residual.wav, which holds the removed sound."
             )
-        if target_speech >= MIN_SPEECH_BAND_FRACTION:
-            return None
-        return (
-            f"The audio kept after removing '{description}' is loud "
-            f"({target_db:.1f} dBFS RMS) but contains almost no speech: only "
-            f"{target_speech * 100:.1f}% of its energy is in the "
-            f"{SPEECH_BAND_HZ[0]:.0f}-{SPEECH_BAND_HZ[1]:.0f}Hz speech band. SAM may have "
-            f"removed far more than the sound you named."
-        )
+        # Nothing else is checkable on a removal job. A bare "the kept audio has
+        # no speech in it" warning was tried and removed: reaching it requires
+        # target_speech < MIN, and if the removed stem were at or above MIN it
+        # would necessarily exceed the target and the mirror check above would
+        # already have fired. So it could only fire when NEITHER stem carries
+        # speech -- i.e. the input had none, as with "remove the drums from this
+        # instrumental". That is correct output, not a failure, and it has no
+        # true-positive case at all. The mirror comparison is self-calibrating
+        # and needs no equivalent of the description-driven arming below.
+        return None
 
     if target_speech >= MIN_SPEECH_BAND_FRACTION:
         return None
@@ -734,6 +735,9 @@ def handle(
 
         metadata = {
             "job_id": int(job.get("id", 0) or 0),
+            # Always present, so one key reports what happened on every path
+            # (the denoiser writes "spectral_subtraction" into the same key).
+            "method": "remove" if remove_mode else "separate",
             "input_filename": str(job.get("input_filename") or input_path.name),
             "description": description,
             "duration_seconds": round(duration_seconds, 3),
@@ -757,7 +761,6 @@ def handle(
             },
         }
         if remove_mode:
-            metadata["method"] = "remove"
             metadata["removed"] = description
             # description here is the DERIVED prompt; surface the user's own
             # wording so a listener can see both what was asked and what was done.

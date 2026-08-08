@@ -158,20 +158,83 @@ _MEDIUM_RE = re.compile(r"\b(" + "|".join(_MEDIUM_WORDS) + r")s?\b")
 _BACKGROUND_CUES = ("background", "playing", "blaring", "is on", "next room",
                     "in another room")
 
-# SAM extracts the sound you DESCRIBE -- it does not follow instructions. So
-# "remove the barking dog" makes it return the DOG as target.wav and push the
-# voice into residual.wav, then report success, with the speech-band guard
-# disarmed because the description never mentions speech. That is this project's
-# founding failure reachable through ordinary English, so removal phrasing routes
-# to denoise: it under-cleans, which is the reversible direction.
-# To extract a source, NAME it ("the guitar") rather than asking to remove it.
-_REMOVAL_CUES = (
-    "remove", "delete", "strip", "suppress", "eliminate", "mute", "silence",
-    "take out", "cut out", "get rid of", "filter out", "without the",
-    "minus the", "reduce", "kill", "drown out", "clean out", "take away",
-    "less of",
-    "strip out",  # Must be listed explicitly for exact-phrase extraction; "strip" alone misses two-word variant. Routing is neutral: "strip out" ⊃ "strip" so choose_method's membership test is unchanged.
+# SAM extracts the sound you DESCRIBE -- it does not follow instructions. So a
+# removal request must never be handed to SAM verbatim: "remove the barking dog"
+# would make it return the DOG as target.wav. Instead the cue is stripped, SAM is
+# run on the named sound, and its RESIDUAL is handed back as the deliverable.
+#
+# Cues are matched on WORD BOUNDARIES, in TWO TIERS. Bare substring matching read
+# "kill" out of "killer", "mute" out of "commuter", "strip" out of
+# "stripped-back" and "less of" out of "unless of"; on this route a false cue
+# match is not a mere misroute, it INVERTS the deliverable -- "the killer bass
+# line" was cut at the false match into the prompt "er bass line", and the user
+# was handed everything EXCEPT the sound they named, reported as success.
+#
+#   PRECISE (_REMOVAL_CUE_RE)   -> routes to "remove", and is the same pattern
+#       strip_removal_cue() excises, so the route and the derived prompt are
+#       decided by ONE regex and cannot disagree.
+#   LOOSE (_REMOVAL_INTENT_RE)  -> never routes to "remove", but VETOES
+#       "separate". It holds the inflections no regex can disambiguate
+#       ("stripping the guitar" vs "a stripped-back drum track"). Letting one of
+#       those fall through to the mixture check would return the named sound
+#       ALONE -- the exact inverse of a removal request, and this project's
+#       founding failure. They denoise instead: under-cleaning is recoverable.
+
+# Verbs whose stem ends in a silent "e" that the gerund DROPS: mute -> muting,
+# silence -> silencing, reduce -> reducing. This is why an inflection appended to
+# the whole word cannot work -- "mute(?:ing)?" does not match "muting", so
+# "muting the typing" matched no cue at all and routed to "separate".
+_E_FINAL_CUE_STEMS = ("remov", "delet", "eliminat", "mut", "silenc", "reduc")
+# Verbs that simply take the suffix: suppress -> suppressing, kill -> killing.
+_PLAIN_CUE_STEMS = ("suppress", "kill")
+
+# Phrasal cues inflect on the FIRST word ("taking out", never "take outing").
+# The particle is what makes the FULL inflection safe here: "filtered out" can
+# only be a removal, whereas a bare "muted" is usually just a description of a
+# sound. Irregular pasts are listed separately ("took", "got") because no suffix
+# rule produces them.
+_PHRASAL_CUE_PATTERNS = (
+    r"tak(?:e|es|ing)\s+out", r"took\s+out",
+    r"tak(?:e|es|ing)\s+away", r"took\s+away",
+    r"cut(?:s|ting)?\s+out",
+    r"strip(?:s|ped|ping)?\s+out",
+    r"g(?:et|ets|etting)\s+rid\s+of", r"got\s+rid\s+of",
+    r"filter(?:s|ed|ing)?\s+out",
+    r"drown(?:s|ed|ing)?\s+out",
+    r"clean(?:s|ed|ing)?\s+out",
 )
+# Not verbs at all, so inflection is meaningless for them.
+_FIXED_CUE_PATTERNS = (r"without\s+the", r"minus\s+the", r"less\s+of")
+# Single words, restricted to the two forms that ASK for something: the
+# imperative ("mute the typing") and the gerund ("muting the typing"). The -s and
+# -ed forms live in the loose tier -- "the piano is muted" describes a sound, it
+# does not ask for the piano to go. "strip" doubles its consonant and
+# "stripped"/"stripping" are ambiguous, so only its bare imperative is precise.
+_SIMPLE_CUE_PATTERNS = tuple(
+    [s + r"(?:e|ing)" for s in _E_FINAL_CUE_STEMS]
+    + [s + r"(?:ing)?" for s in _PLAIN_CUE_STEMS]
+    + [r"strip"]
+)
+# ORDER MATTERS: alternation is first-alternative-wins at a given position, so
+# the phrasal patterns must precede the simple ones, or "strip out the piano"
+# matches only "strip" and sends SAM the prompt "out the piano".
+_REMOVAL_CUE_RE = re.compile(
+    r"\b(?:"
+    + "|".join(_PHRASAL_CUE_PATTERNS + _FIXED_CUE_PATTERNS + _SIMPLE_CUE_PATTERNS)
+    + r")\b",
+    re.IGNORECASE,
+)
+
+# The ambiguous tier. Past participles are as often descriptive as they are
+# requests ("the piano is muted", "the applause was eliminated"), and no regex
+# can tell "stripping the guitar" from "a stripped-back drum track". Declining to
+# route these to "remove" is correct; letting them reach "separate" is not, so
+# they are caught here and forced to denoise.
+_REMOVAL_INTENT_PATTERNS = tuple(
+    [s + r"(?:es|ed)" for s in _E_FINAL_CUE_STEMS]
+) + (r"suppress(?:es|ed)", r"kill(?:s|ed)", r"strip(?:s|ped|ping)")
+_REMOVAL_INTENT_RE = re.compile(
+    r"\b(?:" + "|".join(_REMOVAL_INTENT_PATTERNS) + r")\b", re.IGNORECASE)
 
 # Leading determiners left behind once the cue is gone: "remove the guitar"
 # strips to "the guitar", and SAM does better with the bare source name.
@@ -187,19 +250,22 @@ def strip_removal_cue(description: str) -> str:
     is not re-flowed as English -- a cue in the middle of a sentence leaves a
     clumsy prompt, which is accepted so long as the named source survives.
 
+    Excises the PRECISE tier only, using the very regex choose_method() routes
+    on, so routing and prompt derivation can never disagree about what the cue
+    was. Loose-tier phrasing never routes to "remove", so it never arrives here;
+    if it does (an explicit method="remove"), nothing is excised and the
+    description reaches SAM whole, rather than being cut at an ambiguous word.
+
     Returns "" when nothing usable is left; the caller vetoes the route.
     """
     text = (description or "").strip()
     if not text:
         return ""
-    low = text.lower()
-    # Longest cue first: "strip out" must win over the shorter "strip" cue it contains.
-    for cue in sorted(_REMOVAL_CUES, key=len, reverse=True):
-        i = low.find(cue)
-        if i == -1:
-            continue
-        text = f"{text[:i]} {text[i + len(cue):]}".strip()
-        break
+    # Leftmost match wins. The alternation is ordered so a phrasal cue beats the
+    # simple cue it contains ("strip out" over "strip") at the same position.
+    m = _REMOVAL_CUE_RE.search(text)
+    if m:
+        text = f"{text[:m.start()]} {text[m.end():]}".strip()
     text = _LEADING_ARTICLE_RE.sub("", text.strip() + " ", count=1).rstrip()
     return " ".join(text.split())
 
@@ -215,11 +281,22 @@ def choose_method(description: str, explicit: str = "auto") -> str:
     # Checked FIRST: a removal request names the sound to DISCARD. If that sound
     # is one SAM can extract, run SAM and hand back the residual; if it is only
     # "noise" or "hiss", there is no source to extract, so denoise instead.
-    if any(r in text for r in _REMOVAL_CUES):
+    if _REMOVAL_CUE_RE.search(text):
         if _MIXTURE_RE.search(text):
             return "remove"
         if _MEDIUM_RE.search(text) and any(c in text for c in _BACKGROUND_CUES):
             return "remove"
+        # _MIXTURE_PHRASES is DELIBERATELY not consulted here, and must not be
+        # added: "remove the noise over her voice" would then route to SAM with
+        # "her voice" left in the derived prompt, so SAM would extract the voice
+        # and hand back everything else -- deleting exactly what the user was
+        # trying to keep. A removal description names the sound to DISCARD, so
+        # only an explicitly named source is safe evidence here.
+        return "denoise"
+    if _REMOVAL_INTENT_RE.search(text):
+        # Might be a removal request; too ambiguous to derive a prompt from.
+        # What matters is that it does not fall through to "separate", which
+        # would return the named sound ALONE -- the inverse of what was asked.
         return "denoise"
     if _MIXTURE_RE.search(text):
         return "separate"

@@ -50,9 +50,27 @@ class RemovalGuardTests(unittest.TestCase):
         removed = _write(self.tmp, "r.wav", _tone(1000))
         msg = h._separation_sanity_warning(
             deliverable, removed, "barking dog", remove_mode=True)
-        self.assertIn("removed", msg.lower())
+        # Assert on wording UNIQUE to the mirror check. "removed" alone also
+        # appears in the non-removal fallback message, so this test passed
+        # against a mutant with the mirror branch deleted.
+        self.assertIn("carries more speech than what was kept", msg)
         # The old wording points at the wrong file on a removal job.
         self.assertNotIn("voice is probably THERE", msg)
+
+    def test_speech_free_removal_job_does_not_warn(self):
+        """"Remove the drums from this instrumental" is not a failure.
+
+        Arming the speech check unconditionally used to fire a third warning
+        whenever the KEPT audio had no speech in it -- which, on material with
+        no speech anywhere, is every single time. That message could only ever
+        be reached when neither stem cleared the threshold, so it had no
+        true-positive case; the mirror comparison above is self-calibrating and
+        correctly declines here.
+        """
+        deliverable = _write(self.tmp, "t.wav", _tone(120))   # bass, no speech
+        removed = _write(self.tmp, "r.wav", _tone(150))       # drums, no speech
+        self.assertIsNone(h._separation_sanity_warning(
+            deliverable, removed, "drums", remove_mode=True))
 
     def test_healthy_removal_is_silent(self):
         """Voice kept, tone removed -- nothing to warn about."""
@@ -68,7 +86,10 @@ class RemovalGuardTests(unittest.TestCase):
         msg = h._separation_sanity_warning(
             silent, removed, "barking dog", remove_mode=True)
         self.assertIsNotNone(msg)
-        self.assertIn("near-silent", msg.lower())
+        # Wording unique to the removal variant. "near-silent" alone also
+        # appears in the pre-existing non-removal message, so this test passed
+        # against a mutant with the removal branch deleted.
+        self.assertIn("Almost nothing is left after removing", msg)
 
     def test_normal_separate_job_is_unchanged(self):
         """remove_mode defaults False: existing behaviour must not shift."""
