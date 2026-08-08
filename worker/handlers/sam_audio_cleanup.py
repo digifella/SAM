@@ -462,6 +462,7 @@ def handle(
     progress_cb: Optional[Callable[[float, str, Optional[str]], None]] = None,
     is_cancelled_cb: Optional[Callable[[], bool]] = None,
     work_dir: Optional[Path] = None,
+    remove_mode: bool = False,
 ) -> dict:
     if not input_path or not input_path.exists():
         raise ValueError("sam_audio_cleanup requires an input audio file")
@@ -696,7 +697,15 @@ def handle(
         target_path = _find_single_output(output_dir, "_target")
         residual_path = _find_single_output(output_dir, "_residual")
 
-        separation_warning = _separation_sanity_warning(target_path, residual_path, description)
+        # On a removal job the user wants everything EXCEPT what they named, and
+        # that is exactly SAM's residual. Swapping here -- not after the ZIP is
+        # built -- is what keeps the guard, both normalizers, sf.info and the ZIP
+        # member names all pointing at the deliverable.
+        if remove_mode:
+            target_path, residual_path = residual_path, target_path
+
+        separation_warning = _separation_sanity_warning(
+            target_path, residual_path, description, remove_mode=remove_mode)
         if separation_warning:
             logger.warning(separation_warning)
             _safe_progress(progress_cb, 72, "Warning: target output is near-silent", "postprocess")
@@ -747,6 +756,13 @@ def handle(
                 "allow_cpu_fallback": allow_cpu_fallback,
             },
         }
+        if remove_mode:
+            metadata["method"] = "remove"
+            metadata["removed"] = description
+            # description here is the DERIVED prompt; surface the user's own
+            # wording so a listener can see both what was asked and what was done.
+            metadata["description"] = str(
+                payload.get("original_description") or description)
         if separation_warning:
             metadata["warning"] = separation_warning
 
