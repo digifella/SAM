@@ -147,11 +147,24 @@ generative model, not algebra.
   contains no speech word, so description-driven arming would never fire — the precise
   hole that made the founding failure silent.
 - **Adds the mirror check:** warn when the removed stem's speech-band fraction both
-  exceeds `MIN_SPEECH_BAND_FRACTION` *and* exceeds the deliverable's. Two conditions, not
-  one: "merely higher" would fire whenever the discarded sound happens to carry incidental
-  mid-band energy, and a bare threshold would fire on a genuinely speech-adjacent source.
-  This mirrors the existing comparison at `sam_audio_cleanup.py:256`. It is the founding
-  failure inverted, and nothing else would catch it.
+  exceeds `MIN_SPEECH_BAND_FRACTION` *and* exceeds the deliverable's by
+  `MIRROR_SPEECH_MARGIN`. Three conditions, not one: "merely higher" fires whenever the
+  discarded sound happens to carry incidental mid-band energy, a bare threshold fires on a
+  genuinely speech-adjacent source, and "higher by any amount" fired on the real cicada
+  job (removed 53.7% against kept 48.8%) whose output the listener judged good. Both ends
+  of the margin are measured — 4.9 points is a false positive, the founding failure's 58.5
+  points must still trip it. This mirrors the existing comparison at
+  `sam_audio_cleanup.py:256`. It is the founding failure inverted, and nothing else would
+  catch it.
+- **Adds an absolute backstop:** the mirror check arms on a *share*, so it goes quiet
+  exactly when the discarded stem is swamped by the loud non-speech source the job is
+  about — a stem can hold the entire voice and still score under 10%. When the deliverable
+  itself is under `MIN_SPEECH_BAND_FRACTION`, the guard therefore compares absolute
+  speech-band levels (`_speech_band_dbfs`) and warns when the discarded stem holds audible
+  speech-band energy and clearly more of it than the deliverable. Gating on the absolute
+  level rather than the share is what keeps it silent on genuinely speech-free material
+  ("remove the drums from this instrumental"), where there is no speech-band energy in
+  either stem to compare.
 
 The existing near-silent RMS check still runs first, now against the deliverable, where
 near-silence means SAM classified nearly the whole file as the sound to remove.

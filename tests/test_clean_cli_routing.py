@@ -270,6 +270,47 @@ class AmbiguousRemovalPhrasingNeverSeparatesTests(unittest.TestCase):
                 self.assertEqual(clean_cli.choose_method(desc), "denoise")
 
 
+class PassivePhrasingNamesTheSoundToKeepTests(unittest.TestCase):
+    """A passive or descriptive cue names the sound to KEEP, not to discard.
+
+    Giving the phrasal cues full -s/-ed inflection looked safe -- the particle
+    seemed to make "filtered out" unambiguously a removal -- but it matched the
+    passive, and in the passive the cue's object is the thing to preserve. Every
+    description below was measured routing to "remove", with the prompt shown
+    beside it, which sends SAM after the sound the user asked to keep and hands
+    back everything else, reported as success:
+
+        "her voice is drowned out by the music"       -> "her voice is by the music"
+        "the music drowns out her voice"              -> "music her voice"
+        "the guitar is filtered out"                  -> "guitar is"
+        "the speaker is drowned out by traffic noise" -> "speaker is by traffic noise"
+
+    The first is the flagship voice-over-music job, phrased the way a person
+    phrases it. The single-word cues were already handled this way -- their
+    -s/-ed forms are loose because "the piano is muted" describes a mix -- so
+    this is the phrasal verbs being made consistent with them, not a new rule.
+
+    Denoise, not separate: separate would return the named sound ALONE, which is
+    the same inversion by another route.
+    """
+
+    def test_passive_and_descriptive_cues_never_route_to_remove(self):
+        for desc in [
+            "her voice is drowned out by the music",
+            "the music drowns out her voice",
+            "the guitar is filtered out",
+            "the speaker is drowned out by traffic noise",
+            # The audio dropping out is not a removal request at all; it used to
+            # route to "remove" with the prompt "audio halfway".
+            "the audio cuts out halfway",
+            # Single-word cues, for the same reason and by the same tier.
+            "the guitar is muted",
+            "the vocals are reduced",
+        ]:
+            with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+
 class BackgroundDeviceIsAMixtureTests(unittest.TestCase):
     """A device word counts only alongside evidence it is audibly playing.
 

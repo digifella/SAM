@@ -33,15 +33,28 @@ class StripRemovalCueTests(unittest.TestCase):
         "remove", "removing", "delete", "deleting", "eliminate", "eliminating",
         "mute", "muting", "silence", "silencing", "reduce", "reducing",
         "suppress", "suppressing", "kill", "killing", "strip",
-        "take out", "takes out", "taking out", "took out",
-        "take away", "takes away", "taking away", "took away",
-        "cut out", "cuts out", "cutting out",
-        "strip out", "strips out", "stripped out", "stripping out",
-        "get rid of", "gets rid of", "getting rid of", "got rid of",
-        "filter out", "filters out", "filtered out", "filtering out",
-        "drown out", "drowns out", "drowned out", "drowning out",
-        "clean out", "cleans out", "cleaned out", "cleaning out",
+        "take out", "taking out", "took out",
+        "take away", "taking away", "took away",
+        "cut out", "cutting out",
+        "strip out", "stripping out",
+        "get rid of", "getting rid of", "got rid of",
+        "filter out", "filtering out",
+        "drown out", "drowning out",
+        "clean out", "cleaning out",
         "without the", "minus the", "less of",
+    ]
+
+    # The -s/-ed forms of the same phrasal verbs, which are NOT precise cues.
+    # They read as removals in isolation, but in a sentence they are the finite
+    # verb of a passive or descriptive clause whose object is the sound to KEEP
+    # ("her voice is drowned out by the music"). They belong to the loose tier:
+    # never "remove", never "separate".
+    DEMOTED_PHRASAL_FORMS = [
+        "takes out", "takes away", "cuts out",
+        "strips out", "stripped out", "gets rid of",
+        "filters out", "filtered out",
+        "drowns out", "drowned out",
+        "cleans out", "cleaned out",
     ]
 
     def test_every_cue_form_is_strippable(self):
@@ -61,6 +74,18 @@ class StripRemovalCueTests(unittest.TestCase):
             desc = f"{cue} the guitar"
             with self.subTest(cue=cue):
                 self.assertEqual(clean_cli.choose_method(desc), "remove")
+
+    def test_demoted_phrasal_forms_denoise_even_beside_a_named_source(self):
+        """A mixture word must not promote a loose-tier form back to "remove".
+
+        "drowns out the guitar" names a source SAM can extract, which is exactly
+        what makes the misroute dangerous: it would be handed the prompt
+        "guitar" and the user would get back everything except the guitar.
+        """
+        for cue in self.DEMOTED_PHRASAL_FORMS:
+            desc = f"{cue} the guitar"
+            with self.subTest(cue=cue):
+                self.assertEqual(clean_cli.choose_method(desc), "denoise")
 
     def test_a_phrasal_cue_beats_the_simple_cue_inside_it(self):
         """Alternation order is load-bearing: "strip out" must win over "strip".

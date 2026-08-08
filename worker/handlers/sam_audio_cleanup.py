@@ -180,6 +180,25 @@ SPEECH_BAND_HZ = (300.0, 3400.0)
 # speech on this material sits well above 20%, so the threshold has wide margin
 # on both sides.
 MIN_SPEECH_BAND_FRACTION = 0.10
+# How far the DISCARDED stem's speech share must EXCEED the kept stem's before the
+# removal mirror check calls it a failure. Both ends of this margin are measured,
+# not chosen on feel:
+#   2026-08-08, a real job on real audio ("remove the cicadas" from a boy talking
+#     under very loud cicadas): removed 53.7% against kept 48.8%, a 4.9-point gap,
+#     on output the listener judged "did a great job". Firing there is a FALSE
+#     POSITIVE, and a warning that fires on good output is one nobody reads.
+#   2026-08-04, the failure this guard exists for: the residual carried 58.6%
+#     against a target at 0.1% -- a 58.5-point gap.
+# 20 points is ~4x above the measured false positive and ~3x below the real
+# failure, so the founding case still trips it by a wide margin.
+MIRROR_SPEECH_MARGIN = 0.20
+# The mirror check arms on a SHARE, so it falls silent exactly when the discarded
+# stem is swamped by the loud non-speech source a removal job is about. The
+# backstop below compares absolute speech-band levels instead. It needs the
+# discarded stem to hold audible speech-band energy AND clearly more of it than
+# the kept stem; measured true positive was 14.1 dB of separation (-23.0 dBFS in
+# the discarded stem against -37.0 dBFS in the kept one).
+SPEECH_BAND_DOMINANCE_DB = 6.0
 # Words that mean the caller asked for SPEECH. The band check only applies then --
 # extracting "a dog barking" or "bass guitar" legitimately has no speech energy.
 _SPEECH_WORDS = ("speak", "speech", "talking", "talk", "voice", "vocal",
@@ -214,6 +233,22 @@ def _speech_band_fraction(path: Path) -> float:
         total += float(power.sum())
         band += float(power[mask].sum())
     return (band / total) if total > 0 else 1.0
+
+
+def _speech_band_dbfs(path: Path) -> float:
+    """Absolute level of the speech band, rather than its share of the stem.
+
+    _speech_band_fraction is a RATIO, so a stem holding the entire voice still
+    scores near zero once loud out-of-band energy swamps it -- which is the
+    normal state of the stem a removal job discards. This answers the different
+    question "is there any speech-band energy here at all", which is what tells
+    a lost voice apart from material that never had a voice in it.
+    """
+    rms = _rms_dbfs(path)
+    frac = _speech_band_fraction(path)
+    if rms == float("-inf") or frac <= 0.0:
+        return float("-inf")
+    return rms + 10.0 * math.log10(frac)
 
 
 def _separation_sanity_warning(target_path: Path, residual_path: Path, description: str,
@@ -262,11 +297,13 @@ def _separation_sanity_warning(target_path: Path, residual_path: Path, descripti
 
     if remove_mode:
         removed_speech = _speech_band_fraction(residual_path)
-        # Two conditions, not one. "Merely higher" fires whenever the removed
-        # sound carries incidental mid-band energy; a bare threshold fires on
-        # any genuinely speech-adjacent source.
+        # Three conditions, not one. "Merely higher" fires whenever the removed
+        # sound carries incidental mid-band energy; a bare threshold fires on any
+        # genuinely speech-adjacent source; and "higher by any amount at all"
+        # fired on a real job whose output the listener called good (see
+        # MIRROR_SPEECH_MARGIN -- 4.9 points of excess was enough).
         if (removed_speech >= MIN_SPEECH_BAND_FRACTION
-                and removed_speech > target_speech):
+                and removed_speech > target_speech + MIRROR_SPEECH_MARGIN):
             return (
                 f"What was REMOVED carries more speech than what was kept: "
                 f"{removed_speech * 100:.1f}% of its energy is in the "
@@ -275,15 +312,33 @@ def _separation_sanity_warning(target_path: Path, residual_path: Path, descripti
                 f"treated the voice as '{description}' and discarded it. Check "
                 f"residual.wav, which holds the removed sound."
             )
-        # Nothing else is checkable on a removal job. A bare "the kept audio has
-        # no speech in it" warning was tried and removed: reaching it requires
-        # target_speech < MIN, and if the removed stem were at or above MIN it
-        # would necessarily exceed the target and the mirror check above would
-        # already have fired. So it could only fire when NEITHER stem carries
-        # speech -- i.e. the input had none, as with "remove the drums from this
-        # instrumental". That is correct output, not a failure, and it has no
-        # true-positive case at all. The mirror comparison is self-calibrating
-        # and needs no equivalent of the description-driven arming below.
+
+        # Backstop for what the mirror check cannot see. It arms on a SHARE, so a
+        # discarded stem can hold the whole voice and still score under
+        # MIN_SPEECH_BAND_FRACTION when louder out-of-band energy swamps it --
+        # cicadas, music, traffic, i.e. precisely what a removal job removes.
+        # Measured case: kept -13.5 dBFS at 0.4% speech, discarded -8.9 dBFS at
+        # 3.9% speech WITH the voice in it. The mirror check declines (3.9% < 10%)
+        # and the voice is gone silently.
+        #
+        # Gated on ABSOLUTE speech-band level, not the share, because that is what
+        # separates a lost voice from material that never had one: "remove the
+        # drums from this instrumental" leaves both stems with no speech-band
+        # energy to speak of, and must stay silent.
+        if target_speech < MIN_SPEECH_BAND_FRACTION:
+            removed_band_db = _speech_band_dbfs(residual_path)
+            kept_band_db = _speech_band_dbfs(target_path)
+            if (removed_band_db >= SILENT_RMS_DBFS
+                    and removed_band_db >= kept_band_db + SPEECH_BAND_DOMINANCE_DB):
+                return (
+                    f"The audio kept after removing '{description}' is loud "
+                    f"({target_db:.1f} dBFS RMS) but contains almost no speech: only "
+                    f"{target_speech * 100:.1f}% of its energy is in the "
+                    f"{SPEECH_BAND_HZ[0]:.0f}-{SPEECH_BAND_HZ[1]:.0f}Hz speech band, and "
+                    f"residual.wav holds {removed_band_db - kept_band_db:.1f} dB more "
+                    f"speech-band energy than it does. SAM may have removed far more than "
+                    f"the sound you named."
+                )
         return None
 
     if target_speech >= MIN_SPEECH_BAND_FRACTION:

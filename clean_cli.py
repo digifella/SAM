@@ -189,19 +189,36 @@ _E_FINAL_CUE_STEMS = ("remov", "delet", "eliminat", "mut", "silenc", "reduc")
 _PLAIN_CUE_STEMS = ("suppress", "kill")
 
 # Phrasal cues inflect on the FIRST word ("taking out", never "take outing").
-# The particle is what makes the FULL inflection safe here: "filtered out" can
-# only be a removal, whereas a bare "muted" is usually just a description of a
-# sound. Irregular pasts are listed separately ("took", "got") because no suffix
-# rule produces them.
+# Only the forms that ASK for something are precise: the imperative ("filter out
+# the siren"), the gerund ("filtering out the siren") and the irregular pasts,
+# listed separately because no suffix rule produces them ("took", "got").
+#
+# The -s and -ed forms are NOT here, and the particle does not make them safe.
+# They are the finite verb of a PASSIVE or DESCRIPTIVE clause, and in that
+# construction the cue's object is the sound the user wants to KEEP:
+#     "her voice is drowned out by the music"   -> keep the voice
+#     "the music drowns out her voice"          -> keep the voice
+#     "the guitar is filtered out"              -> a description of the mix
+#     "the audio cuts out halfway"              -> not a source at all
+# Routing those to "remove" cuts the description at the cue and hands SAM the
+# very sound to preserve, which is the C1 inversion in a different costume. They
+# live in the loose tier, matching the single-word verbs, whose -s/-ed forms
+# ("the piano is muted", "the vocals are reduced") were demoted for this reason.
+#
+# KNOWN GAP, deliberately not closed here: the progressive is descriptive too,
+# but shares its surface form with the imperative gerund -- "the music is
+# drowning out her voice" (description) against "drowning out the applause"
+# (request). Only the copula tells them apart, so demoting the gerund would lose
+# the request. Flagged in the fix report rather than fixed on spec.
 _PHRASAL_CUE_PATTERNS = (
-    r"tak(?:e|es|ing)\s+out", r"took\s+out",
-    r"tak(?:e|es|ing)\s+away", r"took\s+away",
-    r"cut(?:s|ting)?\s+out",
-    r"strip(?:s|ped|ping)?\s+out",
-    r"g(?:et|ets|etting)\s+rid\s+of", r"got\s+rid\s+of",
-    r"filter(?:s|ed|ing)?\s+out",
-    r"drown(?:s|ed|ing)?\s+out",
-    r"clean(?:s|ed|ing)?\s+out",
+    r"tak(?:e|ing)\s+out", r"took\s+out",
+    r"tak(?:e|ing)\s+away", r"took\s+away",
+    r"cut(?:ting)?\s+out",
+    r"strip(?:ping)?\s+out",
+    r"g(?:et|etting)\s+rid\s+of", r"got\s+rid\s+of",
+    r"filter(?:ing)?\s+out",
+    r"drown(?:ing)?\s+out",
+    r"clean(?:ing)?\s+out",
 )
 # Not verbs at all, so inflection is meaningless for them.
 _FIXED_CUE_PATTERNS = (r"without\s+the", r"minus\s+the", r"less\s+of")
@@ -230,7 +247,22 @@ _REMOVAL_CUE_RE = re.compile(
 # can tell "stripping the guitar" from "a stripped-back drum track". Declining to
 # route these to "remove" is correct; letting them reach "separate" is not, so
 # they are caught here and forced to denoise.
-_REMOVAL_INTENT_PATTERNS = tuple(
+#
+# The phrasal -s/-ed forms sit here too. They read as a removal in isolation
+# ("filtered out"), but in running text they are the verb of a passive or
+# descriptive clause whose object is the sound to KEEP ("her voice is drowned
+# out by the music"), so deriving a prompt from them inverts the deliverable.
+# Denoising under-cleans instead, which is the recoverable direction.
+_PHRASAL_INTENT_PATTERNS = (
+    r"takes\s+out", r"takes\s+away",
+    r"cuts\s+out",
+    r"strip(?:s|ped)\s+out",
+    r"gets\s+rid\s+of",
+    r"filter(?:s|ed)\s+out",
+    r"drown(?:s|ed)\s+out",
+    r"clean(?:s|ed)\s+out",
+)
+_REMOVAL_INTENT_PATTERNS = _PHRASAL_INTENT_PATTERNS + tuple(
     [s + r"(?:es|ed)" for s in _E_FINAL_CUE_STEMS]
 ) + (r"suppress(?:es|ed)", r"kill(?:s|ed)", r"strip(?:s|ped|ping)")
 _REMOVAL_INTENT_RE = re.compile(
