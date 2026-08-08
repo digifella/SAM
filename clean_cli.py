@@ -206,14 +206,20 @@ def strip_removal_cue(description: str) -> str:
 
 def choose_method(description: str, explicit: str = "auto") -> str:
     """Pick the processing method. Explicit always beats inference."""
-    if explicit in ("denoise", "separate"):
+    if explicit in ("denoise", "separate", "remove"):
         return explicit
     if explicit != "auto":
         raise ValueError(
-            f"unknown method {explicit!r}; expected auto, denoise or separate")
+            f"unknown method {explicit!r}; expected auto, denoise, separate or remove")
     text = (description or "").lower()
-    # Checked FIRST: a removal request names the sound to discard, not to keep.
+    # Checked FIRST: a removal request names the sound to DISCARD. If that sound
+    # is one SAM can extract, run SAM and hand back the residual; if it is only
+    # "noise" or "hiss", there is no source to extract, so denoise instead.
     if any(r in text for r in _REMOVAL_CUES):
+        if _MIXTURE_RE.search(text):
+            return "remove"
+        if _MEDIUM_RE.search(text) and any(c in text for c in _BACKGROUND_CUES):
+            return "remove"
         return "denoise"
     if _MIXTURE_RE.search(text):
         return "separate"

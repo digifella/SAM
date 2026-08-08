@@ -95,18 +95,22 @@ class MixtureWordsMatchOnWordBoundariesTests(unittest.TestCase):
                 self.assertEqual(clean_cli.choose_method(desc), "separate")
 
 
-class RemovalPhrasingMustNotReachSamTests(unittest.TestCase):
-    """"Remove the X" names the sound to DISCARD, so SAM must not see it.
+class RemovalPhrasingReturnsTheResidualTests(unittest.TestCase):
+    """"Remove the X" runs SAM on X and hands back the RESIDUAL.
 
-    SAM extracts the sound you describe. Given "remove the barking dog" it
-    returns the DOG as target.wav and pushes the voice into residual.wav, then
-    reports success -- and the speech-band guard never arms, because the
-    description never mentions speech. That is this project's founding failure,
-    reachable through ordinary English. Removal phrasing therefore denoises,
-    which merely under-cleans: the reversible direction.
+    This inverts the ruling in 40edf52, which sent all removal phrasing to
+    denoise. That reasoning was about returning SAM's TARGET: when SAM finds
+    nothing, the target is a near-empty stem and the voice is lost silently.
+    It does not transfer to returning SAM's RESIDUAL -- when SAM finds nothing
+    the residual is approximately the whole input, so the failure is a benign
+    under-clean, the same reversible direction 40edf52 chose denoise for.
+
+    All 13 descriptions below were must-denoise assertions under the old
+    ruling. They are retained here as must-remove so the boundary stays pinned
+    and the corpus does not shrink.
     """
 
-    def test_removal_phrasing_routes_to_denoise(self):
+    def test_removal_of_a_named_source_routes_to_remove(self):
         for desc in [
             "remove the barking dog",
             "take out the traffic noise",
@@ -123,7 +127,30 @@ class RemovalPhrasingMustNotReachSamTests(unittest.TestCase):
             "remove the tv in the background",
         ]:
             with self.subTest(desc=desc):
+                self.assertEqual(clean_cli.choose_method(desc), "remove")
+
+    def test_removal_without_a_named_source_still_denoises(self):
+        """The boundary that must NOT move: hiss and noise are not sources.
+
+        Asking SAM to extract "hiss" is the single-speaker case that returns an
+        empty stem. These stay on the denoiser.
+        """
+        for desc in [
+            "remove the background noise",
+            "remove the noise in the background",
+            "remove the hiss",
+            "get rid of the static",
+            "remove noise from this phone message",
+            "clean this up and remove the hum",
+        ]:
+            with self.subTest(desc=desc):
                 self.assertEqual(clean_cli.choose_method(desc), "denoise")
+
+    def test_explicit_method_still_wins(self):
+        self.assertEqual(
+            clean_cli.choose_method("remove the barking dog", "denoise"), "denoise")
+        self.assertEqual(
+            clean_cli.choose_method("clean this up", "remove"), "remove")
 
     def test_naming_a_source_to_keep_still_separates(self):
         """The supported way to extract a source is to NAME it, not remove it."""
