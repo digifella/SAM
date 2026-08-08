@@ -169,8 +169,38 @@ _REMOVAL_CUES = (
     "remove", "delete", "strip", "suppress", "eliminate", "mute", "silence",
     "take out", "cut out", "get rid of", "filter out", "without the",
     "minus the", "reduce", "kill", "drown out", "clean out", "take away",
-    "less of",
+    "less of", "strip out",
 )
+
+# Leading determiners left behind once the cue is gone: "remove the guitar"
+# strips to "the guitar", and SAM does better with the bare source name.
+_LEADING_ARTICLE_RE = re.compile(
+    r"^(?:the|a|an|any|all|that|this|those|these)\s+", re.IGNORECASE)
+
+
+def strip_removal_cue(description: str) -> str:
+    """Derive SAM's extraction prompt from a removal request.
+
+    SAM extracts the sound it is DESCRIBED, so the cue must not survive:
+    "remove the barking dog" has to reach SAM as "barking dog". The remainder
+    is not re-flowed as English -- a cue in the middle of a sentence leaves a
+    clumsy prompt, which is accepted so long as the named source survives.
+
+    Returns "" when nothing usable is left; the caller vetoes the route.
+    """
+    text = (description or "").strip()
+    if not text:
+        return ""
+    low = text.lower()
+    # Longest cue first: "take out" must win over any shorter cue it contains.
+    for cue in sorted(_REMOVAL_CUES, key=len, reverse=True):
+        i = low.find(cue)
+        if i == -1:
+            continue
+        text = f"{text[:i]} {text[i + len(cue):]}".strip()
+        break
+    text = _LEADING_ARTICLE_RE.sub("", text.strip() + " ", count=1).rstrip()
+    return " ".join(text.split())
 
 
 def choose_method(description: str, explicit: str = "auto") -> str:
