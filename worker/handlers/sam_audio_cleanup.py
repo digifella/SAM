@@ -216,7 +216,8 @@ def _speech_band_fraction(path: Path) -> float:
     return (band / total) if total > 0 else 1.0
 
 
-def _separation_sanity_warning(target_path: Path, residual_path: Path, description: str) -> Optional[str]:
+def _separation_sanity_warning(target_path: Path, residual_path: Path, description: str,
+                               remove_mode: bool = False) -> Optional[str]:
     """Flag a target that cannot be what the description asked for.
 
     Two failure modes, both seen in practice:
@@ -224,11 +225,26 @@ def _separation_sanity_warning(target_path: Path, residual_path: Path, descripti
       2. loud target with no speech in it -- the description asked for a voice
          but SAM extracted rumble, and the voice went into the residual. RMS
          cannot see this one, which is why it shipped undetected.
+
+    On a removal job the stems arrive swapped: target_path is what the user
+    KEEPS and residual_path is what was removed. Two things change. The speech
+    check arms unconditionally, because the derived prompt ("barking dog")
+    never contains a speech word and description-driven arming would never
+    fire. And a third failure mode becomes checkable -- the voice ending up in
+    what was DISCARDED, which is failure mode 2 inverted.
     """
     target_db = _rms_dbfs(target_path)
     residual_db = _rms_dbfs(residual_path)
 
     if target_db < SILENT_RMS_DBFS:
+        if remove_mode:
+            return (
+                f"Almost nothing is left after removing '{description}' - the kept audio "
+                f"is near-silent ({target_db:.1f} dBFS RMS). SAM classified nearly the "
+                f"whole recording as the sound to remove, so the description is very "
+                f"likely too broad. What was removed is in residual.wav "
+                f"({residual_db:.1f} dBFS RMS)."
+            )
         return (
             f"Target output is near-silent ({target_db:.1f} dBFS RMS) - the description "
             f"'{description}' may not match any sound in the audio. SAM-Audio extracts the "
@@ -237,11 +253,38 @@ def _separation_sanity_warning(target_path: Path, residual_path: Path, descripti
             f"({residual_db:.1f} dBFS RMS)."
         )
 
-    asked_for_speech = any(w in (description or "").lower() for w in _SPEECH_WORDS)
+    asked_for_speech = remove_mode or any(
+        w in (description or "").lower() for w in _SPEECH_WORDS)
     if not asked_for_speech:
         return None
 
     target_speech = _speech_band_fraction(target_path)
+
+    if remove_mode:
+        removed_speech = _speech_band_fraction(residual_path)
+        # Two conditions, not one. "Merely higher" fires whenever the removed
+        # sound carries incidental mid-band energy; a bare threshold fires on
+        # any genuinely speech-adjacent source.
+        if (removed_speech >= MIN_SPEECH_BAND_FRACTION
+                and removed_speech > target_speech):
+            return (
+                f"What was REMOVED carries more speech than what was kept: "
+                f"{removed_speech * 100:.1f}% of its energy is in the "
+                f"{SPEECH_BAND_HZ[0]:.0f}-{SPEECH_BAND_HZ[1]:.0f}Hz speech band, against "
+                f"{target_speech * 100:.1f}% in the audio you are keeping. SAM may have "
+                f"treated the voice as '{description}' and discarded it. Check "
+                f"residual.wav, which holds the removed sound."
+            )
+        if target_speech >= MIN_SPEECH_BAND_FRACTION:
+            return None
+        return (
+            f"The audio kept after removing '{description}' is loud "
+            f"({target_db:.1f} dBFS RMS) but contains almost no speech: only "
+            f"{target_speech * 100:.1f}% of its energy is in the "
+            f"{SPEECH_BAND_HZ[0]:.0f}-{SPEECH_BAND_HZ[1]:.0f}Hz speech band. SAM may have "
+            f"removed far more than the sound you named."
+        )
+
     if target_speech >= MIN_SPEECH_BAND_FRACTION:
         return None
 
