@@ -38,7 +38,7 @@ class CleanCliCoreTests(unittest.TestCase):
         argv += (extra_args or [])
 
         def default_fake(input_path, input_data, job, progress_cb=None,
-                         is_cancelled_cb=None, work_dir=None):
+                         is_cancelled_cb=None, work_dir=None, remove_mode=False):
             progress_cb(50, "half way", "separate")
             zip_path = Path(work_dir) / "result_inner.zip"
             import zipfile
@@ -78,7 +78,7 @@ class CleanCliCoreTests(unittest.TestCase):
         # Mirrors the real handle(): products land under
         # <work_dir>/sam_handler_<job_id>/, not directly in work_dir.
         def nested_fake(input_path, input_data, job, progress_cb=None,
-                        is_cancelled_cb=None, work_dir=None):
+                        is_cancelled_cb=None, work_dir=None, remove_mode=False):
             nested = Path(work_dir) / "sam_handler_0"
             nested.mkdir()
             zip_path = nested / "result_inner.zip"

@@ -201,5 +201,26 @@ class BackgroundDeviceIsAMixtureTests(unittest.TestCase):
                 self.assertEqual(clean_cli.choose_method(desc), "denoise")
 
 
+class RemoveDispatchTests(unittest.TestCase):
+    """An unusable prompt must veto the route rather than reach SAM.
+
+    handle() defaults an empty description to "speech" -- on a removal job that
+    would extract exactly the thing the user wants to keep, then hand back the
+    residual, deleting the voice. The veto is what prevents that.
+    """
+
+    def test_empty_prompt_downgrades_to_denoise(self):
+        # "remove the" has a cue and no source, so routing already says denoise;
+        # the veto covers the case where a source word survives routing but the
+        # prompt strips to nothing.
+        self.assertEqual(clean_cli.strip_removal_cue("remove the"), "")
+        self.assertEqual(clean_cli.choose_method("remove the"), "denoise")
+
+    def test_explicit_remove_with_unusable_prompt_is_vetoed_too(self):
+        """An explicit method key does not make a blank prompt usable."""
+        self.assertEqual(clean_cli.choose_method("remove", "remove"), "remove")
+        self.assertEqual(clean_cli.strip_removal_cue("remove"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

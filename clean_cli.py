@@ -261,6 +261,21 @@ def main(argv=None) -> int:
         method = choose_method(payload.get("description", ""),
                                payload.get("method", "auto"))
         strength = payload.get("strength", "normal")
+
+        # A removal job needs a prompt SAM can act on. If nothing usable
+        # survives the strip, fall back to denoise: handle() defaults an empty
+        # description to "speech", which on a removal job would extract the
+        # voice and then hand back everything else.
+        sam_payload = payload
+        if method == "remove":
+            prompt = strip_removal_cue(payload.get("description", ""))
+            if prompt:
+                sam_payload = dict(payload)
+                sam_payload["description"] = prompt
+                sam_payload["original_description"] = payload.get("description", "")
+            else:
+                method = "denoise"
+
         emit(5, "route", f"method={method}")
 
         if method == "denoise":
@@ -285,11 +300,12 @@ def main(argv=None) -> int:
             with gpu_lock(args.gpu_lock_timeout):
                 result = handle(
                     input_path=input_path,
-                    input_data=payload,
+                    input_data=sam_payload,
                     job={"id": 0, "input_filename": input_path.name},
                     progress_cb=lambda pct, msg, stage=None: emit(pct, stage or "processing", msg),
                     is_cancelled_cb=cancel.is_set,
                     work_dir=out_dir,
+                    remove_mode=(method == "remove"),
                 )
 
         zip_src = Path(result["output_file"])
