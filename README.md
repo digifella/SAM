@@ -207,16 +207,21 @@ description names a source to extract *and* implies a mixture — a named second
 else — "clean this up", "remove background noise", "a person speaking", an empty
 description — denoises.
 
-### Name the sound you want to KEEP, not the one you want gone
+### Removing a sound vs. extracting one
 
-SAM extracts the sound you *describe*; it does not follow instructions. Ask it to
-"remove the barking dog" and it returns **the dog** as `target.wav` and puts the voice in
-`residual.wav` — and it reports success, because nothing in that description mentions
-speech for the speech-band guard to check. So removal phrasing ("remove", "get rid of",
-"take out", "suppress", "filter out", ...) routes to **denoise** instead. The dog will
-still be there, but the voice survives, and under-cleaning is the recoverable mistake.
+Both are supported, and the difference is what lands in `target.wav`.
 
-To actually extract a source, name it: `"the guitar"`, not `"remove the guitar"`.
+- **Name a sound** — `"the guitar"` — and SAM extracts it: `target.wav` is the guitar.
+- **Ask for a sound to go** — `"remove the guitar"` — and you get the opposite:
+  `target.wav` is everything *except* the guitar, and `residual.wav` holds the guitar
+  that was taken out.
+
+Removal only reaches SAM when the sound you name is one it can extract. "Remove the
+background noise" and "remove the hiss" still denoise, because hiss is not a source —
+asking SAM to extract it returns a near-empty stem.
+
+If SAM cannot find the sound you asked to remove, the result is approximately your
+original audio: nothing was removed, but nothing was lost either.
 
 ### Known routing limitations
 
@@ -235,6 +240,10 @@ explicitly in `job.json` whenever you know which one you want — it always beat
   recording medium as often as a second source, so they only imply a mixture alongside a
   cue that the device is audibly playing ("a tv **playing** in the background"). "Clean up
   this phone call recording" denoises.
+- **A removal request whose subject is the topic of the speech misroutes.** "Remove the
+  part about traffic" names a subject being discussed, not a sound, and will route to
+  `remove`. The two-sided guard should catch the resulting voice loss and warn, but set
+  `method` explicitly when you know.
 
 ### `job.json` keys
 
@@ -242,11 +251,12 @@ No new CLI flags were added — the bridge, Cortex and the sp4 wrapper send exac
 they already send, and routing reads two keys already carried in the existing payload:
 
 ```json
-{"description": "...", "method": "auto|denoise|separate", "strength": "gentle|normal|aggressive"}
+{"description": "...", "method": "auto|denoise|separate|remove", "strength": "gentle|normal|aggressive"}
 ```
 
-- `method` — `"auto"` (default), `"denoise"`, or `"separate"`. An explicit value always
-  wins over inference.
+- `method` — `"auto"` (default), `"denoise"`, `"separate"`, or `"remove"`. An explicit
+  value always beats inference. `"remove"` runs SAM on the named sound and returns the
+  residual as `target.wav`.
 - `strength` — one of `STRENGTH_PRESETS`: `"gentle"`, `"normal"` (default), or
   `"aggressive"`, trading off how much noise is removed against the risk of musical-noise
   warble.
